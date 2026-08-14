@@ -1,0 +1,11 @@
+streamlit==1.61.1
+pandas==2.3.3
+numpy>=1.26,<3
+plotly==6.9.0
+finance-datareader==0.9.202
+pykrx==1.2.8
+openai==2.53.0
+requests==2.34.2
+beautifulsoup4==4.15.0
+lxml>=5,<7
+

@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from dataclasses import replace
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from ai_judge import AIJudge
+from config import AppConfig
+from quant_engine import calculate_indicators, score_stock
+from performance_engine import PerformanceEngine
+from risk_engine import RiskEngine
+from storage import Storage
+from validation_engine import walk_forward_backtest
+
+
+def synthetic_prices(rows: int = 520) -> pd.DataFrame:
+    dates = pd.bdate_range("2024-01-02", periods=rows)
+    trend = 10000 + np.arange(rows) * 12
+    cycle = np.sin(np.arange(rows) / 8) * 350
+    close = trend + cycle
+    open_price = close * (1 + np.sin(np.arange(rows)) * 0.001)
+    volume = np.full(rows, 150_000.0)
+    volume[::37] = 650_000
+    return pd.DataFrame(
+        {
+            "Date": dates,
+            "Open": open_price,
+            "High": np.maximum(open_price, close) * 1.015,
+            "Low": np.minimum(open_price, close) * 0.985,
+            "Close": close,
+            "Volume": volume,
+            "Change": pd.Series(close).pct_change().to_numpy(),
+        }
+    )
+
+
+class QuantEngineTests(unittest.TestCase):
+    def test_indicators_do_not_change_when_only_future_prices_change(self):
+        prices = synthetic_prices()
+        original = calculate_indicators(prices)
+        changed = prices.copy()
+        changed.loc[400:, "Close"] *= 3
+        changed.loc[400:, "High"] *= 3
+        changed.loc[400:, "Low"] *= 3
+        recalculated = calculate_indicators(changed)
+        for column in ["RSI14", "MACD", "ATR14", "MOMENTUM120"]:
+            self.assertAlmostEqual(original.loc[350, column], recalculated.loc[350, column], places=8)
+
+    def test_multifactor_score_marks_missing_flow_as_missing(self):
+        prices = synthetic_prices()
+        fundamental = {
+            "status": "ok",
+            "period": "2025-12-01",
+            "per": 12,
+            "pbr": 1.1,
+            "roe": 14,
+            "debt_ratio": 45,
+            "operating_margin": 13,
+            "revenue_growth": 9,
+        }
+        news = {
+            "status": "ok",
+            "news": [{"title": "신규 공급 계약", "url": "https://example.test/1", "published_date": "2026-08-13", "sentiment": 1}],
+        }
+        score = score_stock(
+            {"ticker": "005930", "name": "테스트", "market": "KOSPI", "sector": "반도체"},
+            prices,
+            fundamental,
+            {"status": "missing_configuration"},
+            news,
+            {"status": "missing_configuration", "items": []},
+            "balanced",
+        )
+        self.assertTrue(score["eligible"])
+        self.assertIsNone(score["flow_score"])
+        self.assertGreater(score["data_completeness"], 0.5)
+        self.assertTrue(any("수급 데이터 결측" in reason for reason in score["reasons"]))
+
+
+class ValidationAndRiskTests(unittest.TestCase):
+    def test_walk_forward_uses_non_overlapping_trades_and_costs(self):
+        prices = synthetic_prices()
+        result = walk_forward_backtest(
+            prices,
+            prices,
+            strategy="balanced",
+            holding_days=5,
+            commission_bps=15,
+            slippage_bps=10,
+        )
+        self.assertEqual(result["status"], "ok")
+        self.assertGreater(result["sample_count"], 5)
+        self.assertEqual(result["cost_bps"], 25)
+        exits = [pd.Timestamp(item["exit_date"]) for item in result["trades"]]
+        entries = [pd.Timestamp(item["entry_date"]) for item in result["trades"]]
+        self.assertTrue(all(entries[index] > exits[index - 1] for index in range(1, len(entries))))
+
+    def test_risk_budget_caps_position(self):
+        config = replace(AppConfig(), account_equity=100_000_000, max_position_pct=0.15)
+        risk = RiskEngine(config).assess_position(
+            {
+                "facts": {
+                    "current_price": 50_000,
+                    "atr14": 1_500,
+                    "recent_low20": 47_000,
+                    "avg_amount20": 10_000_000_000,
+                }
+            }
+        )
+        self.assertEqual(risk["status"], "ok")
+        self.assertLessEqual(risk["position_value"], 15_000_000)
+        self.assertLessEqual(risk["risk_budget"], config.account_equity * config.risk_per_trade)
+
+    def test_ai_hard_gate_rejects_insufficient_evidence(self):
+        review = AIJudge(AppConfig()).review(
+            {
+                "eligible": False,
+                "data_completeness": 0.2,
+                "backtest": {"status": "insufficient_data", "reason": "표본 없음"},
+                "risk": {"status": "rejected", "reason": "ATR 없음"},
+            }
+        )
+        self.assertEqual(review["decision"], "REJECT")
+        self.assertEqual(review["source"], "HARD_GATE")
+
+
+class StorageTests(unittest.TestCase):
+    def test_price_round_trip(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            storage = Storage(Path(temp_dir) / "test.db")
+            original = synthetic_prices(30)
+            storage.upsert_prices("005930", original, "TEST")
+            loaded = storage.load_prices("005930")
+            self.assertEqual(len(loaded), 30)
+            self.assertAlmostEqual(float(loaded.iloc[-1]["Close"]), float(original.iloc[-1]["Close"]))
+
+    def test_post_evaluation_persists_realized_and_benchmark_returns(self):
+        class FakeDataEngine:
+            def get_prices(self, ticker, **kwargs):
+                dates = pd.bdate_range("2026-01-05", periods=7)
+                if ticker == "KS11":
+                    close = np.array([100, 101, 102, 103, 104, 105, 106], dtype=float)
+                else:
+                    close = np.array([101, 102, 104, 106, 110, 111, 112], dtype=float)
+                return pd.DataFrame(
+                    {
+                        "Date": dates,
+                        "Open": close,
+                        "High": close + 1,
+                        "Low": close - 1,
+                        "Close": close,
+                        "Volume": 1000,
+                        "Change": pd.Series(close).pct_change(),
+                    }
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = replace(AppConfig(), db_path=Path(temp_dir) / "eval.db")
+            storage = Storage(config.db_path)
+            storage.save_recommendation(
+                {
+                    "run_id": "run-eval",
+                    "ticker": "005930",
+                    "name": "테스트",
+                    "market": "KOSPI",
+                    "sector": "반도체",
+                    "as_of_date": "2026-01-02",
+                    "strategy": "balanced",
+                    "entry_price": 100,
+                    "stop_price": 95,
+                    "target_weight": 0.1,
+                    "quantity": 10,
+                    "total_score": 80,
+                    "ai_decision": "WATCH",
+                    "ai_confidence": 60,
+                    "thesis": "테스트",
+                    "review_json": "{}",
+                    "horizon_days": 5,
+                    "benchmark_symbol": "KS11",
+                    "created_at": "2026-01-02T00:00:00Z",
+                }
+            )
+            engine = PerformanceEngine(config, storage, FakeDataEngine())
+            evaluated = engine.evaluate_due(as_of=pd.Timestamp("2026-01-12").date())
+            self.assertEqual(len(evaluated), 1)
+            self.assertEqual(evaluated[0]["outcome"], "SUCCESS")
+            self.assertGreater(evaluated[0]["net_return"], 0)
+            self.assertGreater(evaluated[0]["excess_return"], 0)
+            self.assertEqual(storage.history().iloc[0]["outcome"], "SUCCESS")
+
+
+if __name__ == "__main__":
+    unittest.main()
