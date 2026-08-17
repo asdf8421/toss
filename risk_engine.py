@@ -94,15 +94,23 @@ class RiskEngine:
         candidates: list[dict[str, Any]],
         regime: dict[str, Any],
         max_positions: int,
+        existing_positions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         investable = max(0.0, 1 - float(regime.get("cash_target", 0.4)))
-        remaining = investable
+        existing_positions = existing_positions or []
+        existing_weight = sum(float(item.get("target_weight") or 0) for item in existing_positions)
+        remaining = max(0.0, investable - existing_weight)
         sector_weights: defaultdict[str, float] = defaultdict(float)
+        for item in existing_positions:
+            sector_weights[item.get("sector") or "미분류"] += float(item.get("target_weight") or 0)
         positions = []
-        total_risk = 0.0
+        total_risk = sum(
+            float(item.get("capital_at_risk_pct") or 0) / 100
+            for item in existing_positions
+        )
 
         for candidate in sorted(candidates, key=lambda item: item["total_score"], reverse=True):
-            if len(positions) >= max_positions or remaining <= 0.001:
+            if len(existing_positions) + len(positions) >= max_positions or remaining <= 0.001:
                 break
             risk = candidate.get("risk") or self.assess_position(candidate)
             if risk.get("status") != "ok":
@@ -140,10 +148,14 @@ class RiskEngine:
             sector_weights[sector] += actual_weight
             total_risk += position_risk
 
-        invested = sum(item["target_weight"] for item in positions)
+        new_weight = sum(item["target_weight"] for item in positions)
+        invested = existing_weight + new_weight
         return {
             "regime": regime,
             "positions": positions,
+            "existing_positions": existing_positions,
+            "existing_weight": round(existing_weight, 4),
+            "new_buy_weight": round(new_weight, 4),
             "invested_weight": round(invested, 4),
             "cash_weight": round(1 - invested, 4),
             "portfolio_stop_risk_pct": round(total_risk * 100, 3),

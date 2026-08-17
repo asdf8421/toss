@@ -7,6 +7,8 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parent
+GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
+GROQ_RETIRED_MODELS = {"llama-3.3-70b-versatile", "llama-3.1-8b-instant"}
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -40,6 +42,11 @@ def get_secret(name: str, default: str = "") -> str:
         return default
 
 
+def _groq_model() -> str:
+    configured = get_secret("GROQ_MODEL", GROQ_DEFAULT_MODEL)
+    return GROQ_DEFAULT_MODEL if configured in GROQ_RETIRED_MODELS else configured
+
+
 @dataclass(frozen=True)
 class AppConfig:
     db_path: Path = Path(
@@ -68,7 +75,7 @@ class AppConfig:
     liquidity_participation: float = float(os.getenv("LIQUIDITY_PARTICIPATION", "0.02"))
 
     groq_model: str = field(
-        default_factory=lambda: get_secret("GROQ_MODEL", "llama-3.3-70b-versatile")
+        default_factory=_groq_model
     )
     benchmark_kospi: str = os.getenv("BENCHMARK_KOSPI", "KS11")
     benchmark_kosdaq: str = os.getenv("BENCHMARK_KOSDAQ", "KQ11")

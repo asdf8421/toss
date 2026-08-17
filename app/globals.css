@@ -138,6 +138,10 @@ nav a:hover::after, nav a:focus-visible::after { right: 0; }
 .badge.watch { background: var(--signal); color: var(--ink); }
 .badge.reject { background: #ffe1db; color: #aa3724; }
 .badge.approve { background: #dce7ff; color: #234c9c; }
+.badge.buy { background: var(--signal); color: var(--ink); }
+.badge.hold { background: #dce7ff; color: #234c9c; }
+.badge.reduce { background: #ffe6a8; color: #7d5200; }
+.badge.sell, .badge.avoid { background: #ffe1db; color: #aa3724; }
 .watch-card:hover .badge.watch { background: var(--ink); color: var(--signal); }
 
 .ranking-table { border-top: 2px solid var(--ink); }

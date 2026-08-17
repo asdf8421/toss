@@ -591,7 +591,7 @@ class Storage:
                 SELECT r.* FROM recommendations r
                 LEFT JOIN evaluations e ON e.recommendation_id=r.id
                 WHERE e.recommendation_id IS NULL
-                  AND r.ai_decision IN ('APPROVE', 'WATCH')
+                  AND r.ai_decision IN ('BUY', 'HOLD')
                 ORDER BY r.as_of_date
                 """
             ).fetchall()

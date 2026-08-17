@@ -12,6 +12,8 @@ from ai_judge import AIJudge
 from config import AppConfig
 from quant_engine import calculate_indicators, score_stock
 from performance_engine import PerformanceEngine
+from portfolio_input import parse_holdings
+from prediction_engine import build_quant_signal, forecast_returns
 from risk_engine import RiskEngine
 from storage import Storage
 from validation_engine import walk_forward_backtest
@@ -82,6 +84,43 @@ class QuantEngineTests(unittest.TestCase):
 
 
 class ValidationAndRiskTests(unittest.TestCase):
+    def test_forecast_is_unchanged_by_prices_after_as_of(self):
+        prices = synthetic_prices()
+        cutoff = prices.iloc[400]["Date"]
+        original = forecast_returns(prices, as_of=cutoff)
+        changed = prices.copy()
+        changed.loc[401:, ["Open", "High", "Low", "Close"]] *= 7
+        recalculated = forecast_returns(changed, as_of=cutoff)
+        self.assertEqual(original["status"], "ok")
+        for horizon in ["5", "20"]:
+            self.assertEqual(
+                original["horizons"][horizon]["expected_return_pct"],
+                recalculated["horizons"][horizon]["expected_return_pct"],
+            )
+            self.assertGreaterEqual(original["horizons"][horizon]["oos_sample_count"], 20)
+
+    def test_quant_buy_requires_every_measured_gate(self):
+        candidate = {
+            "total_score": 75,
+            "data_completeness": 0.9,
+            "forecast": {
+                "horizons": {
+                    "5": {"status": "ok", "expected_return_pct": 2, "up_probability_pct": 62, "oos_directional_accuracy_pct": 55},
+                    "20": {"status": "ok", "expected_return_pct": 4, "up_probability_pct": 60},
+                }
+            },
+            "backtest": {"average_net_return": 1.2, "average_excess_return": 0.4},
+            "risk": {"status": "ok", "stop_price": 90},
+            "facts": {"current_price": 100},
+        }
+        signal = build_quant_signal(candidate)
+        self.assertEqual(signal["action"], "BUY")
+        self.assertTrue(signal["buy_gate_passed"])
+        candidate["backtest"]["average_net_return"] = -0.1
+        rejected = build_quant_signal(candidate)
+        self.assertNotEqual(rejected["action"], "BUY")
+        self.assertNotIn("BUY", rejected["allowed_ai_actions"])
+
     def test_walk_forward_uses_non_overlapping_trades_and_costs(self):
         prices = synthetic_prices()
         result = walk_forward_backtest(
@@ -115,7 +154,7 @@ class ValidationAndRiskTests(unittest.TestCase):
         self.assertLessEqual(risk["position_value"], 15_000_000)
         self.assertLessEqual(risk["risk_budget"], config.account_equity * config.risk_per_trade)
 
-    def test_ai_hard_gate_rejects_insufficient_evidence(self):
+    def test_ai_hard_gate_avoids_insufficient_evidence(self):
         review = AIJudge(AppConfig()).review(
             {
                 "eligible": False,
@@ -124,8 +163,14 @@ class ValidationAndRiskTests(unittest.TestCase):
                 "risk": {"status": "rejected", "reason": "ATR 없음"},
             }
         )
-        self.assertEqual(review["decision"], "REJECT")
+        self.assertEqual(review["action"], "AVOID")
         self.assertEqual(review["source"], "HARD_GATE")
+
+    def test_holdings_parser_validates_and_normalizes(self):
+        holdings, errors = parse_holdings("5930 12 71,500\n000660 3 185000")
+        self.assertFalse(errors)
+        self.assertEqual(holdings[0]["ticker"], "005930")
+        self.assertEqual(holdings[0]["average_price"], 71500)
 
 
 class StorageTests(unittest.TestCase):
@@ -175,7 +220,7 @@ class StorageTests(unittest.TestCase):
                     "target_weight": 0.1,
                     "quantity": 10,
                     "total_score": 80,
-                    "ai_decision": "WATCH",
+                    "ai_decision": "BUY",
                     "ai_confidence": 60,
                     "thesis": "테스트",
                     "review_json": "{}",

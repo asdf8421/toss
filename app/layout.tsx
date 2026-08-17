@@ -9,18 +9,18 @@ export async function generateMetadata(): Promise<Metadata> {
   const origin = `${protocol}://${host}`;
 
   return {
-    title: "Evidence First · AI Fund Manager",
-    description: "숫자는 퀀트가 계산하고 AI는 반대편에서 심사하는 증거 우선 투자 시스템.",
+    title: "AI Fund Manager · 예측에서 행동까지",
+    description: "5·20일 퀀트 예측과 Groq 분석으로 매수·보유·축소·매도 행동을 만드는 투자 의사결정 시스템.",
     openGraph: {
-      title: "Evidence First · AI Fund Manager",
-      description: "추천하지 않는 능력까지 설계한 감사 가능한 투자위원회.",
+      title: "AI Fund Manager · 예측에서 행동까지",
+      description: "퀀트 예측, Groq 근거 분석, 리스크 한도와 주문 계획을 하나로 연결했습니다.",
       type: "website",
       images: [{ url: `${origin}/og.png`, width: 1200, height: 630, alt: "Evidence First AI Fund Manager" }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "Evidence First · AI Fund Manager",
-      description: "추천하지 않는 능력까지 설계한 감사 가능한 투자위원회.",
+      title: "AI Fund Manager · 예측에서 행동까지",
+      description: "퀀트 예측, Groq 근거 분석, 리스크 한도와 주문 계획을 하나로 연결했습니다.",
       images: [`${origin}/og.png`],
     },
   };

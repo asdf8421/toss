@@ -23,7 +23,7 @@ try {
     }
     $content = (@($preserved) + @(
         "GROQ_API_KEY = `"$escaped`"",
-        'GROQ_MODEL = "llama-3.3-70b-versatile"'
+        'GROQ_MODEL = "openai/gpt-oss-120b"'
     )) -join [Environment]::NewLine
     $content += [Environment]::NewLine
     [IO.File]::WriteAllText($secretPath, $content, [Text.UTF8Encoding]::new($false))

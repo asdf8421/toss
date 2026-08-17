@@ -58,6 +58,7 @@ def main() -> int:
             universe_limit=args.limit,
             deep_analysis_limit=args.deep_limit,
             max_positions=max(1, args.max_positions),
+            require_ai=args.require_groq,
             progress=progress,
         )
         pipeline.storage.update_batch_job(

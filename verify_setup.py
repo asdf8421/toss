@@ -22,8 +22,21 @@ def verify_groq(config: AppConfig) -> bool:
         response = client.chat.completions.create(
             model=config.groq_model,
             temperature=0,
-            max_tokens=30,
-            response_format={"type": "json_object"},
+            max_tokens=200,
+            reasoning_effort="low",
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "connection_check",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {"connected": {"type": "boolean"}},
+                        "required": ["connected"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
             messages=[
                 {"role": "system", "content": "Return JSON only."},
                 {"role": "user", "content": 'Return exactly {"connected": true}.'},
@@ -52,4 +65,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
