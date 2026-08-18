@@ -12,7 +12,7 @@
 ## 실행
 
 ```powershell
-venv\Scripts\activate
+.venv\Scripts\activate
 pip install -r requirements.txt
 streamlit run app.py
 ```
@@ -36,7 +36,7 @@ powershell -ExecutionPolicy Bypass -File .\setup_groq.ps1
 Groq 연결이 확인된 다음 아래 명령으로 유동성 적격 전체 종목을 분석합니다.
 
 ```powershell
-venv\Scripts\python.exe -B batch_runner.py --strategy balanced --require-groq
+.venv\Scripts\python.exe -B batch_runner.py --strategy balanced --require-groq
 ```
 
 첫 실행은 종목별 외부 수집 때문에 오래 걸립니다. `Ctrl+C`로 중단해도 이미 저장한
@@ -48,11 +48,26 @@ Groq가 `BUY`로 판단한 종목에만 위험 예산을 배정합니다.
 ## 데이터 정책
 
 - 가격·시장·업종·재무: FinanceDataReader
-- 뉴스·PER/PBR 보조 스냅샷: 네이버 금융
+- 뉴스·PER/PBR 보조 스냅샷: 네이버 금융. 뉴스는 제목과 출처가 확인되는 짧은 기사
+  요약만 저장하며 전체 기사를 재배포하지 않습니다.
 - 투자자 수급: pykrx/KRX (`KRX_ID`, `KRX_PW` 필요)
 - 공시: OpenDART (`DART_API_KEY` 필요)
 - AI 분석: Groq OpenAI 호환 API의 `openai/gpt-oss-120b` (`GROQ_API_KEY` 필요)
 - 영속 저장: `data/fund_manager.db` SQLite
+
+가격은 거래소 실시간 호가가 아니라 실행 시점에 공급원이 제공하는 최신 일봉입니다.
+실시간 체결가가 필요한 경우 별도의 증권사 또는 유료 시세 API가 필요합니다.
+
+## 공개 대시보드 갱신
+
+공개 화면에는 소스에 적어 둔 종목이나 예측값이 없습니다. GitHub Actions가 한국
+장중 매시간 및 장 마감 후 파이프라인을 실행하고, 성공한 실행의 JSON 스냅샷만
+Sites의 D1 저장소에 게시합니다. 대시보드는 `/api/snapshot`에서 가장 최근 실행을
+읽으며 실행번호, 생성 시각, 가격 기준일과 각 데이터 출처를 함께 표시합니다.
+
+저장소에는 `GROQ_API_KEY`, `SNAPSHOT_WRITE_TOKEN` 두 Actions secret이 필수입니다.
+`DART_API_KEY`, `KRX_ID`, `KRX_PW`는 공식 공시·수급을 사용할 때 추가합니다. 이 키가
+없어도 네이버/KOSCOM 대체 경로는 동작하지만 화면에 대체 데이터임을 표시합니다.
 
 키가 없는 공급원은 `0`으로 바뀌지 않고 `missing_configuration` 결측으로 저장됩니다.
 Groq 키가 없거나 호출이 실패하면 규칙 결과를 AI 결과로 대체하지 않습니다. UI 실행은

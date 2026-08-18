@@ -15,6 +15,7 @@ from performance_engine import PerformanceEngine
 from portfolio_input import parse_holdings
 from prediction_engine import build_quant_signal, forecast_returns
 from risk_engine import RiskEngine
+from snapshot_export import build_public_snapshot
 from storage import Storage
 from validation_engine import walk_forward_backtest
 
@@ -236,6 +237,50 @@ class StorageTests(unittest.TestCase):
             self.assertGreater(evaluated[0]["net_return"], 0)
             self.assertGreater(evaluated[0]["excess_return"], 0)
             self.assertEqual(storage.history().iloc[0]["outcome"], "SUCCESS")
+
+
+class SnapshotTests(unittest.TestCase):
+    def test_public_snapshot_keeps_sources_and_excludes_indicator_frame(self):
+        result = {
+            "run_id": "verified-run",
+            "as_of_date": "2026-08-18",
+            "strategy": "balanced",
+            "universe_count": 2713,
+            "liquid_universe_count": 371,
+            "filtered_universe_count": 80,
+            "deep_analysis_count": 1,
+            "portfolio": {"cash_weight": 1.0, "positions": []},
+            "data_status": {},
+            "errors": [],
+            "ranked": [
+                {
+                    "ticker": "005930",
+                    "name": "삼성전자",
+                    "market": "KOSPI",
+                    "sector": "반도체",
+                    "total_score": 71.2,
+                    "data_completeness": 0.9,
+                    "facts": {
+                        "current_price": 100,
+                        "price_as_of": "2026-08-18",
+                        "price_source": "TEST",
+                        "news_status": "ok",
+                        "news_detail_coverage": {"covered": 1, "attempted": 1},
+                        "news": [{"title": "검증 기사", "summary": "짧은 출처 요약"}],
+                    },
+                    "forecast": {"status": "ok", "horizons": {}},
+                    "backtest": {"status": "ok", "sample_count": 9},
+                    "risk": {"status": "ok", "stop_price": 90},
+                    "trade_plan": {"order_side": "NONE"},
+                    "ai_review": {"action": "WATCH", "source": "GROQ"},
+                    "indicators": synthetic_prices(10),
+                }
+            ],
+        }
+        snapshot = build_public_snapshot(result)
+        self.assertEqual(snapshot["run_id"], "verified-run")
+        self.assertEqual(snapshot["decisions"][0]["evidence"]["news"][0]["title"], "검증 기사")
+        self.assertNotIn("indicators", snapshot["decisions"][0])
 
 
 if __name__ == "__main__":

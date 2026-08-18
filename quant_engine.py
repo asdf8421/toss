@@ -118,6 +118,7 @@ def score_stock(
         ),
         "news_status": (news or {}).get("status", "unavailable"),
         "news_count": len((news or {}).get("news", [])),
+        "news_detail_coverage": (news or {}).get("article_detail_coverage"),
         "disclosure_status": (disclosures or {}).get("status", "unavailable"),
         "disclosure_count": len((disclosures or {}).get("items", [])),
     }

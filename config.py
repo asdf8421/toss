@@ -56,6 +56,7 @@ class AppConfig:
     max_workers: int = int(os.getenv("SCAN_MAX_WORKERS", "6"))
     request_timeout: int = int(os.getenv("REQUEST_TIMEOUT", "12"))
     verify_ssl: bool = _env_bool("VERIFY_SSL", True)
+    news_detail_limit: int = int(os.getenv("NEWS_DETAIL_LIMIT", "3"))
 
     # Universe safety filters. A value of 0 disables the corresponding filter.
     min_market_cap: float = float(os.getenv("MIN_MARKET_CAP", "50000000000"))

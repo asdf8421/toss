@@ -7,6 +7,7 @@ from datetime import date
 
 from config import AppConfig
 from pipeline import FundManagerPipeline
+from snapshot_export import write_public_snapshot
 
 
 def main() -> int:
@@ -20,6 +21,10 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=3)
     parser.add_argument("--limit", type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument("--deep-limit", type=int, default=0, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--json-output",
+        help="공개 대시보드에 전달할 감사 가능한 JSON 스냅샷 경로",
+    )
     args = parser.parse_args()
 
     config = replace(AppConfig(), max_workers=max(1, args.workers))
@@ -70,6 +75,9 @@ def main() -> int:
             message=f"완료 · 오류 {len(result['errors'])}건",
             result_run_id=result["run_id"],
         )
+        if args.json_output:
+            output = write_public_snapshot(result, args.json_output)
+            print(f"[SNAPSHOT] {output}", flush=True)
         print(
             f"[OK] run_id={result['run_id']} · 전체={result['universe_count']:,} · "
             f"유동성적격={result['liquid_universe_count']:,} · "

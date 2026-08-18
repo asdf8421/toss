@@ -51,6 +51,7 @@ def get_naver_stock_snapshot(
     as_of: date | None = None,
     timeout: int = 10,
     verify_ssl: bool = True,
+    detail_limit: int = 3,
 ) -> dict:
     as_of = as_of or datetime.now().date()
     url = f"{NAVER_FINANCE}/item/main.naver?code={ticker}"
@@ -80,6 +81,25 @@ def get_naver_stock_snapshot(
             verify=verify_ssl,
         )
         response.raise_for_status()
+        redirect_match = re.search(
+            r"(?:top\.)?location\.href\s*=\s*['\"]([^'\"]+)",
+            response.text,
+            flags=re.IGNORECASE,
+        )
+        if redirect_match:
+            response = requests.get(
+                urljoin(response.url, redirect_match.group(1)),
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 Chrome/124 Safari/537.36"
+                    ),
+                    "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.7",
+                },
+                timeout=timeout,
+                verify=verify_ssl,
+            )
+            response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
 
         per_tag = soup.select_one("#_per")
@@ -109,12 +129,128 @@ def get_naver_stock_snapshot(
                     "source": "NAVER_FINANCE",
                 }
             )
+        detail_count = 0
+        for article in articles[: max(0, detail_limit)]:
+            detail = _get_article_detail(
+                article["url"],
+                timeout=timeout,
+                verify_ssl=verify_ssl,
+            )
+            article.update(detail)
+            if detail.get("summary"):
+                detail_count += 1
+                article["sentiment"] = headline_sentiment(
+                    f"{article['title']} {detail['summary']}"
+                )
+            if detail.get("published_at"):
+                article["published_date"] = detail["published_at"][:10]
+            if detail.get("publisher"):
+                article["publisher"] = detail["publisher"]
         result["news"] = articles
+        result["article_detail_coverage"] = {
+            "covered": detail_count,
+            "attempted": min(len(articles), max(0, detail_limit)),
+        }
         result["status"] = "ok" if (result["per"] is not None or articles) else "partial"
     except Exception as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
 
     return result
+
+
+def _get_article_detail(
+    url: str,
+    *,
+    timeout: int,
+    verify_ssl: bool,
+) -> dict:
+    """Fetch a short attributable excerpt, never a full republished article."""
+    result = {
+        "summary": None,
+        "published_at": None,
+        "content_source": url,
+        "detail_status": "unavailable",
+    }
+    try:
+        response = requests.get(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 Chrome/124 Safari/537.36"
+                ),
+                "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.7",
+            },
+            timeout=timeout,
+            verify=verify_ssl,
+        )
+        response.raise_for_status()
+        redirect_match = re.search(
+            r"(?:top\.)?location\.href\s*=\s*['\"]([^'\"]+)",
+            response.text,
+            flags=re.IGNORECASE,
+        )
+        if redirect_match:
+            response = requests.get(
+                urljoin(response.url, redirect_match.group(1)),
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 Chrome/124 Safari/537.36"
+                    ),
+                    "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.7",
+                },
+                timeout=timeout,
+                verify=verify_ssl,
+            )
+            response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        publisher = _meta_content(soup, "property", "og:site_name")
+        if not publisher:
+            logo = soup.select_one(
+                ".media_end_head_top_logo img[alt], .press_logo img[alt]"
+            )
+            publisher = logo.get("alt") if logo else None
+
+        published_at = _meta_content(soup, "property", "article:published_time")
+        if not published_at:
+            stamp = soup.select_one("[data-date-time]")
+            published_at = stamp.get("data-date-time") if stamp else None
+
+        summary = _meta_content(soup, "name", "description")
+        if not summary:
+            summary = _meta_content(soup, "property", "og:description")
+        if not summary:
+            body = soup.select_one("#dic_area, #newsct_article, .articleCont")
+            summary = body.get_text(" ", strip=True) if body else None
+        summary = _clean_excerpt(summary, limit=700)
+
+        result.update(
+            {
+                "summary": summary,
+                "published_at": published_at,
+                "publisher": publisher,
+                "content_source": response.url,
+                "detail_status": "ok" if summary else "partial",
+            }
+        )
+    except Exception as exc:
+        result["detail_error"] = f"{type(exc).__name__}: {exc}"
+    return result
+
+
+def _meta_content(soup: BeautifulSoup, key: str, value: str) -> str | None:
+    tag = soup.find("meta", attrs={key: value})
+    content = tag.get("content") if tag else None
+    return " ".join(str(content).split()) if content else None
+
+
+def _clean_excerpt(value: str | None, *, limit: int) -> str | None:
+    if not value:
+        return None
+    text = " ".join(value.split())
+    return text[:limit] if text else None
 
 
 def get_naver_investor_flow(

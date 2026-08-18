@@ -82,6 +82,10 @@ CREATE TABLE IF NOT EXISTS news (
     title TEXT NOT NULL,
     url TEXT NOT NULL,
     publisher TEXT,
+    published_at TEXT,
+    summary TEXT,
+    content_source TEXT,
+    detail_status TEXT,
     sentiment REAL,
     source TEXT NOT NULL,
     fetched_at TEXT NOT NULL,
@@ -209,6 +213,18 @@ class Storage:
         with self.connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(SCHEMA)
+            existing = {
+                row["name"] for row in conn.execute("PRAGMA table_info(news)").fetchall()
+            }
+            additions = {
+                "published_at": "TEXT",
+                "summary": "TEXT",
+                "content_source": "TEXT",
+                "detail_status": "TEXT",
+            }
+            for column, column_type in additions.items():
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE news ADD COLUMN {column} {column_type}")
 
     def upsert_universe(self, rows: Iterable[dict[str, Any]]) -> None:
         sql = """
@@ -366,15 +382,28 @@ class Storage:
             conn.executemany(
                 """
                 INSERT INTO news (
-                    ticker,published_date,title,url,publisher,sentiment,source,fetched_at
+                    ticker,published_date,title,url,publisher,published_at,summary,
+                    content_source,detail_status,sentiment,source,fetched_at
                 ) VALUES (
-                    :ticker,:published_date,:title,:url,:publisher,:sentiment,:source,:fetched_at
+                    :ticker,:published_date,:title,:url,:publisher,:published_at,:summary,
+                    :content_source,:detail_status,:sentiment,:source,:fetched_at
                 ) ON CONFLICT(ticker,url) DO UPDATE SET
                     published_date=excluded.published_date,title=excluded.title,
-                    publisher=excluded.publisher,sentiment=excluded.sentiment,
+                    publisher=excluded.publisher,published_at=excluded.published_at,
+                    summary=excluded.summary,content_source=excluded.content_source,
+                    detail_status=excluded.detail_status,sentiment=excluded.sentiment,
                     fetched_at=excluded.fetched_at
                 """,
-                rows,
+                [
+                    {
+                        **row,
+                        "published_at": row.get("published_at"),
+                        "summary": row.get("summary"),
+                        "content_source": row.get("content_source"),
+                        "detail_status": row.get("detail_status"),
+                    }
+                    for row in rows
+                ],
             )
 
     def cached_news(self, ticker: str, fetched_on: str, limit: int = 10) -> list[dict[str, Any]]:

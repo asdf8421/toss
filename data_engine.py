@@ -286,21 +286,29 @@ class DataEngine:
         if not force:
             cached = self.storage.cached_news(ticker, date.today().isoformat())
             if cached:
-                return {
-                    "ticker": ticker,
-                    "per": None,
-                    "pbr": None,
-                    "news": cached,
-                    "source": "SQLite daily cache",
-                    "as_of_date": (as_of or date.today()).isoformat(),
-                    "status": "ok",
-                    "error": None,
-                }
+                detailed = sum(bool(item.get("summary")) for item in cached)
+                attempted = min(len(cached), self.config.news_detail_limit)
+                if detailed >= attempted:
+                    return {
+                        "ticker": ticker,
+                        "per": None,
+                        "pbr": None,
+                        "news": cached,
+                        "source": "SQLite daily cache",
+                        "as_of_date": (as_of or date.today()).isoformat(),
+                        "status": "ok",
+                        "error": None,
+                        "article_detail_coverage": {
+                            "covered": detailed,
+                            "attempted": attempted,
+                        },
+                    }
         snapshot = get_naver_stock_snapshot(
             ticker,
             as_of=as_of,
             timeout=self.config.request_timeout,
             verify_ssl=self.config.verify_ssl,
+            detail_limit=self.config.news_detail_limit,
         )
         fetched_at = utc_now()
         for article in snapshot["news"]:
