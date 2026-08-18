@@ -60,10 +60,12 @@ Groq가 `BUY`로 판단한 종목에만 위험 예산을 배정합니다.
 
 ## 공개 대시보드 갱신
 
-공개 화면에는 소스에 적어 둔 종목이나 예측값이 없습니다. GitHub Actions가 한국
-장중 매시간 및 장 마감 후 파이프라인을 실행하고, 성공한 실행의 JSON 스냅샷만
-Sites의 D1 저장소에 게시합니다. 대시보드는 `/api/snapshot`에서 가장 최근 실행을
-읽으며 실행번호, 생성 시각, 가격 기준일과 각 데이터 출처를 함께 표시합니다.
+공개 화면에는 소스에 적어 둔 종목이나 예측값이 없습니다. 성공한 파이프라인의 JSON
+스냅샷만 Sites의 D1 저장소에 게시하며, 대시보드는 `/api/snapshot`에서 가장 최근
+실행을 읽어 실행번호, 생성 시각, 가격 기준일과 각 데이터 출처를 함께 표시합니다.
+장중 매시간 및 장 마감 후 실행할 GitHub Actions 정의는
+`automation/publish-analysis.yml`에 준비되어 있습니다. 저장소 인증에 `workflow`
+권한을 추가한 뒤 `.github/workflows/publish-analysis.yml`로 게시해야 자동 실행됩니다.
 
 저장소에는 `GROQ_API_KEY`, `SNAPSHOT_WRITE_TOKEN` 두 Actions secret이 필수입니다.
 `DART_API_KEY`, `KRX_ID`, `KRX_PW`는 공식 공시·수급을 사용할 때 추가합니다. 이 키가

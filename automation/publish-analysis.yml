@@ -1,0 +1,78 @@
+name: Publish verified market analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      full_scan:
+        description: Run the full liquid-universe price screen
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "5 0-6 * * 1-5"
+    - cron: "30 6 * * 1-5"
+
+concurrency:
+  group: verified-market-analysis
+  cancel-in-progress: false
+
+jobs:
+  analyze-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      contents: read
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      KRX_ID: ${{ secrets.KRX_ID }}
+      KRX_PW: ${{ secrets.KRX_PW }}
+      SNAPSHOT_WRITE_TOKEN: ${{ secrets.SNAPSHOT_WRITE_TOKEN }}
+      SNAPSHOT_ENDPOINT: https://evidence-first-fund-manager.jjh4075161.chatgpt.site/api/snapshot
+      PYTHONUTF8: "1"
+      SCAN_MAX_WORKERS: "4"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install analysis engine
+        run: pip install -r requirements.txt
+
+      - name: Verify required secrets
+        shell: bash
+        run: |
+          test -n "$GROQ_API_KEY" || { echo "GROQ_API_KEY is missing"; exit 2; }
+          test -n "$SNAPSHOT_WRITE_TOKEN" || { echo "SNAPSHOT_WRITE_TOKEN is missing"; exit 2; }
+
+      - name: Run evidence-bound analysis
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.full_scan }}" == "true" ]] || [[ "${{ github.event.schedule }}" == "30 6 * * 1-5" ]]; then
+            LIMIT=0
+            DEEP_LIMIT=20
+          else
+            LIMIT=80
+            DEEP_LIMIT=12
+          fi
+          python -B batch_runner.py \
+            --strategy balanced \
+            --max-positions 5 \
+            --workers 4 \
+            --limit "$LIMIT" \
+            --deep-limit "$DEEP_LIMIT" \
+            --require-groq \
+            --json-output outputs/latest-analysis.json
+
+      - name: Publish snapshot to the dashboard
+        shell: bash
+        run: |
+          curl --fail-with-body --retry 3 --retry-all-errors \
+            -H "Authorization: Bearer $SNAPSHOT_WRITE_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @outputs/latest-analysis.json \
+            "$SNAPSHOT_ENDPOINT"
