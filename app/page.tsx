@@ -1,196 +1,106 @@
 const decisions = [
-  {
-    ticker: "066570",
-    name: "LG전자",
-    action: "BUY",
-    score: 60.88,
-    forecast5: "+8.52%",
-    probability5: "76.0%",
-    forecast20: "+20.04%",
-    confidence: "78%",
-    note: "정량 매수 관문을 모두 통과한 뒤 Groq가 BUY로 확정했습니다.",
-    order: "24주 · 기준가 215,000원",
-  },
-  {
-    ticker: "005935",
-    name: "삼성전자우",
-    action: "WATCH",
-    score: 61.1,
-    forecast5: "+0.05%",
-    probability5: "52.9%",
-    forecast20: "+7.03%",
-    confidence: "68%",
-    note: "중기 추정은 양수지만 단기 기대수익이 비용·안전마진 기준을 넘지 못했습니다.",
-    order: "주문 없음",
-  },
-  {
-    ticker: "009150",
-    name: "삼성전기",
-    action: "AVOID",
-    score: 57.67,
-    forecast5: "−5.52%",
-    probability5: "47.9%",
-    forecast20: "−6.20%",
-    confidence: "78%",
-    note: "5일·20일 기대수익이 모두 음수라 신규 매수를 회피했습니다.",
-    order: "주문 없음",
-  },
-  {
-    ticker: "017670",
-    name: "SK텔레콤",
-    action: "AVOID",
-    score: 50.98,
-    forecast5: "−2.80%",
-    probability5: "44.1%",
-    forecast20: "−5.43%",
-    confidence: "78%",
-    note: "단기·중기 추정과 팩터 검증이 신규 자본 배치 기준에 미달했습니다.",
-    order: "주문 없음",
-  },
+  { ticker: "066570", name: "LG전자", action: "BUY", actionKo: "매수", score: 60.88, f5: "+8.52%", up: "76.0%", f20: "+20.04%", confidence: "78%", price: "215,000원", stop: "184,451원", order: "24주 매수", reason: "예측·백테스트·데이터 완성도·리스크 관문을 모두 통과했습니다." },
+  { ticker: "005935", name: "삼성전자우", action: "WATCH", actionKo: "관찰", score: 61.10, f5: "+0.05%", up: "52.9%", f20: "+7.03%", confidence: "68%", price: "209,200원", stop: "167,354원", order: "주문 없음", reason: "중기 추정은 양수지만 단기 기대수익이 비용과 안전마진을 넘지 못했습니다." },
+  { ticker: "009150", name: "삼성전기", action: "AVOID", actionKo: "매수 제외", score: 57.67, f5: "−5.52%", up: "47.9%", f20: "−6.20%", confidence: "78%", price: "1,610,000원", stop: "1,239,666원", order: "주문 없음", reason: "5일·20일 기대수익이 모두 음수라 신규 자본을 배치하지 않습니다." },
+  { ticker: "017670", name: "SK텔레콤", action: "AVOID", actionKo: "매수 제외", score: 50.98, f5: "−2.80%", up: "44.1%", f20: "−5.43%", confidence: "78%", price: "103,700원", stop: "86,666원", order: "주문 없음", reason: "단기·중기 예측과 팩터 검증이 신규 매수 기준에 미달했습니다." },
 ];
 
-const engines = [
-  ["01", "데이터 엔진", "가격·거래량·재무·수급·공시·뉴스를 기준일과 출처까지 SQLite에 저장"],
-  ["02", "퀀트 엔진", "가치·모멘텀·수급·품질·변동성·뉴스를 계산해 전 종목 순위화"],
-  ["03", "예측·검증 엔진", "5·20일 수익률과 상승확률을 누출 없는 워크포워드 방식으로 추정"],
-  ["04", "리스크 엔진", "ATR 손절, 종목·업종 한도, 보유 노출과 현금 비중을 함께 통제"],
-  ["05", "Groq 분석가", "허용된 BUY/HOLD/REDUCE/SELL/WATCH/AVOID 중 증거에 맞는 행동을 선택"],
-  ["06", "사후평가 엔진", "BUY/HOLD 판단을 실제 수익·비용·벤치마크와 연결해 실패 원인을 누적"],
+const sourceRows = [
+  ["가격·거래량", "FinanceDataReader", "기준일 저장", "정상"],
+  ["재무", "네이버 금융", "최근 완료 회계기간", "정상"],
+  ["투자자 수급", "네이버 추정", "순매수 수량 × 종가", "대체"],
+  ["기업 공시", "KOSCOM", "OpenDART 미연결", "대체"],
+  ["AI 분석", "Groq", "openai/gpt-oss-120b", "정상"],
+];
+
+const process = [
+  ["01", "데이터 수집", "가격·재무·수급·뉴스·공시의 기준일과 출처 저장"],
+  ["02", "예측·검증", "5일·20일 추정과 누출 없는 워크포워드 성과 계산"],
+  ["03", "리스크 산정", "ATR 손절, 종목·업종 한도와 주문 가능 수량 계산"],
+  ["04", "AI 최종 판단", "허용된 행동 안에서 근거와 반대 논리를 종합"],
 ];
 
 export default function Home() {
   return (
-    <main>
-      <header className="site-header">
-        <a className="brand" href="#top" aria-label="AI Fund Manager 홈">
-          <span className="brand-mark">FM</span><span>AI Fund Manager</span>
-        </a>
-        <nav aria-label="주요 메뉴">
-          <a href="#snapshot">검증 실행</a><a href="#actions">행동 판단</a><a href="#ranking">예측표</a><a href="#method">설계</a>
+    <main className="app-shell">
+      <aside className="side-nav">
+        <a className="brand" href="#top" aria-label="AI Fund Manager 홈"><span className="brand-symbol">FM</span><span><strong>AI Fund Manager</strong><small>Decision Support</small></span></a>
+        <nav aria-label="대시보드 메뉴">
+          <a className="active" href="#decision"><span>01</span> 투자 판단</a>
+          <a href="#compare"><span>02</span> 후보 비교</a>
+          <a href="#evidence"><span>03</span> 데이터 출처</a>
+          <a href="#method"><span>04</span> 검증 기준</a>
         </nav>
-        <span className="as-of">VERIFIED · 2026.08.18</span>
-      </header>
+        <div className="side-status"><span className="status-dot" /><div><strong>분석 시스템 정상</strong><small>Groq 4 / 4 응답</small></div></div>
+        <a className="repo-link" href="https://github.com/asdf8421/toss" target="_blank" rel="noreferrer">GitHub 소스 보기 <span>↗</span></a>
+      </aside>
 
-      <section className="hero" id="top">
-        <div className="hero-copy">
-          <p className="eyebrow"><span /> QUANT FORECAST × GROQ ANALYSIS</p>
-          <h1>예측하고,<br />분석하고,<br />행동으로.</h1>
-          <p className="hero-intro">
-            퀀트가 5일·20일 기대수익과 상승확률을 계산하고, Groq가 재무·수급·뉴스·공시와 반대 논리를 함께 읽어 <strong>매수·보유·축소·매도</strong>를 결정합니다.
-          </p>
-          <div className="hero-actions">
-            <a className="button primary" href="#actions">실제 검증 결과</a>
-            <a className="button ghost" href="https://github.com/asdf8421/toss" target="_blank" rel="noreferrer">소스 코드 ↗</a>
-          </div>
-        </div>
-        <div className="decision-card" aria-label="소규모 검증 실행 자산배분">
-          <div className="decision-topline"><span>VALIDATED SAMPLE RUN</span><span className="live-dot">GROQ 4 / 4</span></div>
-          <div className="allocation-ring" style={{ background: "conic-gradient(var(--signal) 0 5.16%, #313a34 5.16% 100%)" }}>
-            <div><strong>5.2%</strong><span>INVESTED</span></div>
-          </div>
-          <div className="decision-grid">
-            <div><span>매수</span><strong>1 종목</strong></div>
-            <div><span>관찰</span><strong>1 종목</strong></div>
-            <div><span>회피</span><strong>2 종목</strong></div>
-            <div><span>현금</span><strong>94.8%</strong></div>
-          </div>
-          <p className="decision-note">10종목 검사 · 5종목 심층분석 · 4종목 Groq 최종 판단</p>
-        </div>
-      </section>
+      <div className="workspace" id="top">
+        <header className="topbar">
+          <div><p className="eyebrow">DAILY DECISION REPORT</p><h1>오늘의 투자 판단</h1><p className="subtitle">예측 수치, 주문 계획, 반대 논리와 데이터 출처를 함께 확인합니다.</p></div>
+          <div className="report-meta"><span>기준일</span><strong>2026.08.18</strong><small>읽기 전용 검증 스냅샷</small></div>
+        </header>
 
-      <section className="ticker-strip" aria-label="검증 요약">
-        <div><span>KRX UNIVERSE</span><strong>2,713</strong></div>
-        <div><span>LIQUID ELIGIBLE</span><strong>803</strong></div>
-        <div><span>DEEP ANALYSIS</span><strong>5</strong></div>
-        <div><span>GROQ SOURCE</span><strong>4 / 4</strong></div>
-        <div><span>UNIT TESTS</span><strong>10 / 10</strong></div>
-      </section>
+        <section className="run-context" aria-label="분석 실행 정보">
+          <div><span>실행 범위</span><strong>가격 10 · 심층 5 · AI 4</strong></div>
+          <div><span>전략</span><strong>균형형 멀티팩터</strong></div>
+          <div><span>AI 원천</span><strong>Groq · 실제 호출</strong></div>
+          <div><span>거래 비용</span><strong>왕복 25bp 반영</strong></div>
+        </section>
 
-      <section className="section snapshot" id="snapshot">
-        <div className="section-heading">
-          <div><p className="kicker">01 / END-TO-END VERIFICATION</p><h2>말이 아니라 실제 실행</h2></div>
-          <p>저장된 Groq 토큰으로 현재 권장 모델을 직접 호출하고, 시장 데이터 수집부터 예측·백테스트·행동 판단·수량 산정까지 한 번에 실행했습니다.</p>
-        </div>
-        <div className="pipeline-card">
-          <div className="pipeline-flow" aria-label="분석 파이프라인">
-            <div><strong>2,713</strong><span>KRX 전체</span></div><i>→</i>
-            <div><strong>10</strong><span>가격 검사</span></div><i>→</i>
-            <div><strong>5</strong><span>예측·검증</span></div><i>→</i>
-            <div className="accent"><strong>4</strong><span>Groq 판단</span></div>
-          </div>
-          <div className="coverage-grid">
-            <div><span>예측 지평</span><strong>5D / 20D</strong><em className="ok">OOS</em></div>
-            <div><span>미래 누출 검사</span><strong>PASS</strong><em className="ok">STRICT</em></div>
-            <div><span>실제 AI 원천</span><strong>GROQ</strong><em className="ok">4 / 4</em></div>
-            <div><span>거래비용</span><strong>25 BPS</strong><em className="ok">APPLIED</em></div>
-            <div><span>구조화 출력</span><strong>JSON SCHEMA</strong><em className="ok">STRICT</em></div>
-            <div><span>AI 실패 정책</span><strong>NO ACTION</strong><em className="warn">FAIL CLOSED</em></div>
-          </div>
-        </div>
-      </section>
+        <section className="summary-grid" aria-label="판단 요약">
+          <article><span>신규 매수</span><strong className="positive">1</strong><small>정량 관문 + AI 통과</small></article>
+          <article><span>관찰</span><strong className="caution">1</strong><small>주문 없이 조건 확인</small></article>
+          <article><span>매수 제외</span><strong className="negative">2</strong><small>예측·검증 기준 미달</small></article>
+          <article><span>계획 투자 비중</span><strong>5.16%</strong><small>현금 94.84%</small></article>
+        </section>
 
-      <section className="section watch-section" id="actions">
-        <div className="section-heading inverted">
-          <div><p className="kicker">02 / ACTION ENGINE</p><h2>실제로 나온 행동 판단</h2></div>
-          <p>아래 값은 2026-08-18 소규모 검증 실행 결과입니다. 정적 검증 스냅샷이며 실시간 투자 권유가 아닙니다.</p>
-        </div>
-        <div className="watch-grid">
-          {decisions.map((item, index) => (
-            <article className="watch-card" key={item.ticker}>
-              <div className="watch-card-top"><span>0{index + 1}</span><span className={`badge ${item.action.toLowerCase()}`}>{item.action}</span></div>
-              <p className="ticker">{item.ticker}</p><h3>{item.name}</h3>
-              <div className="score-line"><span>5D FORECAST / UP</span><strong>{item.forecast5} / {item.probability5}</strong></div>
-              <p>{item.note}</p>
-              <div className="zero-weight"><span>ORDER PLAN</span><strong>{item.order}</strong></div>
-            </article>
-          ))}
-        </div>
-      </section>
+        <div className="content-grid" id="decision">
+          <section className="panel decision-list">
+            <div className="panel-head"><div><p>PRIORITY ACTIONS</p><h2>종목별 최종 판단</h2></div><span className="verified"><i /> AI 응답 검증됨</span></div>
+            {decisions.map((item) => (
+              <article className={`decision-row ${item.action.toLowerCase()}`} key={item.ticker}>
+                <div className="company"><span className={`action ${item.action.toLowerCase()}`}>{item.actionKo}</span><div><h3>{item.name}</h3><small>{item.ticker} · 팩터 {item.score.toFixed(2)}</small></div></div>
+                <div className="decision-values"><div><span>5일 예상</span><strong>{item.f5}</strong></div><div><span>상승확률</span><strong>{item.up}</strong></div><div><span>20일 예상</span><strong>{item.f20}</strong></div><div><span>AI 확신도</span><strong>{item.confidence}</strong></div></div>
+                <p>{item.reason}</p>
+                <div className="order-line"><span>기준가 <b>{item.price}</b></span><span>손절 <b>{item.stop}</b></span><strong>{item.order}</strong></div>
+              </article>
+            ))}
+          </section>
 
-      <section className="section" id="ranking">
-        <div className="section-heading">
-          <div><p className="kicker">03 / FORECAST TABLE</p><h2>예측과 AI 결론을 한 줄에</h2></div>
-          <p>예상수익만 보지 않습니다. 상승확률, 워크포워드 정확도, 비용차감 백테스트, 위험 한도를 통과해야 BUY가 AI 선택지에 들어갑니다.</p>
+          <aside className="right-column">
+            <section className="panel allocation-card">
+              <div className="panel-head compact"><div><p>RISK ALLOCATION</p><h2>자본 배분</h2></div></div>
+              <div className="allocation-total"><span>투자 예정</span><strong>5.16%</strong></div>
+              <div className="allocation-bar"><i /></div>
+              <div className="allocation-legend"><span><i className="invested" />투자 5.16%</span><span><i className="cash" />현금 94.84%</span></div>
+              <dl><div><dt>신규 주문금액</dt><dd>5,160,000원</dd></div><div><dt>손절 기준 총위험</dt><dd>0.73%</dd></div><div><dt>종목당 최대 비중</dt><dd>15.00%</dd></div><div><dt>시장 국면</dt><dd>시스템 산정</dd></div></dl>
+            </section>
+            <section className="panel trust-card">
+              <p>DECISION CONTROL</p><h2>AI가 숫자를 만들지 않습니다</h2>
+              <ul><li><span>1</span>예상수익·확률은 퀀트 계산</li><li><span>2</span>손절·수량은 리스크 계산</li><li><span>3</span>AI는 허용 행동만 선택</li><li><span>4</span>API 실패 시 판단 중단</li></ul>
+            </section>
+          </aside>
         </div>
-        <div className="ranking-table" role="table" aria-label="예측과 행동 판단">
-          <div className="ranking-row ranking-head" role="row"><span>순위</span><span>종목</span><span>행동</span><span>5일 / 상승확률</span><span>20일</span></div>
-          {decisions.map((item, index) => (
-            <div className="ranking-row" role="row" key={item.ticker}>
-              <span className="rank">{String(index + 1).padStart(2, "0")}</span>
-              <span className="company"><strong>{item.name}</strong><small>{item.ticker}</small></span>
-              <span><em className={`badge ${item.action.toLowerCase()}`}>{item.action}</em></span>
-              <span className="score-cell"><i style={{ width: `${Math.max(4, Number(item.probability5.replace("%", "")))}%` }} /><strong>{item.forecast5} / {item.probability5}</strong></span>
-              <span><strong>{item.forecast20}</strong></span>
-            </div>
-          ))}
-        </div>
-      </section>
 
-      <section className="section method" id="method">
-        <div className="section-heading">
-          <div><p className="kicker">04 / SYSTEM DESIGN</p><h2>숫자, 판단, 행동의 분리</h2></div>
-          <p>AI는 가격과 수량을 발명하지 않습니다. 정량 엔진이 행동 경계를 만들고 Groq는 허용된 선택지 안에서 근거와 반대 논리를 종합합니다.</p>
-        </div>
-        <div className="engine-grid">
-          {engines.map(([num, title, copy]) => <article key={num}><span>{num}</span><h3>{title}</h3><p>{copy}</p></article>)}
-        </div>
-      </section>
+        <section className="panel comparison" id="compare">
+          <div className="panel-head"><div><p>CANDIDATE COMPARISON</p><h2>후보 비교</h2></div><span className="table-note">예측값은 수익을 보장하지 않습니다</span></div>
+          <div className="table-wrap"><table><thead><tr><th>최종 판단</th><th>종목</th><th>종합점수</th><th>5일 예상</th><th>상승확률</th><th>20일 예상</th><th>기준가</th><th>주문</th></tr></thead><tbody>
+            {decisions.map(item => <tr key={item.ticker}><td><span className={`action ${item.action.toLowerCase()}`}>{item.actionKo}</span></td><td><strong>{item.name}</strong><small>{item.ticker}</small></td><td>{item.score.toFixed(2)}</td><td className={item.f5.includes("−") ? "down" : "up"}>{item.f5}</td><td>{item.up}</td><td className={item.f20.includes("−") ? "down" : "up"}>{item.f20}</td><td>{item.price}</td><td><strong>{item.order}</strong></td></tr>)}
+          </tbody></table></div>
+        </section>
 
-      <section className="audit-band">
-        <div><p className="kicker">AUDIT TRAIL</p><h2>API가 실패하면 판단도 멈춥니다.</h2></div>
-        <div className="audit-meta">
-          <p><span>RUN ID</span><code>ffc9dd1ad3264a0dbfecf872e4fafa49</code></p>
-          <p><span>AI MODEL</span><strong>openai/gpt-oss-120b</strong></p>
-          <p><span>AI SOURCE</span><strong>GROQ · 4/4</strong></p>
-          <p><span>BUY CONTROL</span><strong>QUANT GATE → GROQ</strong></p>
-        </div>
-      </section>
+        <section className="lower-grid" id="evidence">
+          <div className="panel source-panel"><div className="panel-head compact"><div><p>DATA PROVENANCE</p><h2>데이터 출처</h2></div></div><div className="source-table">
+            {sourceRows.map(([data, source, method, status]) => <div key={data}><strong>{data}</strong><span>{source}</span><small>{method}</small><em className={status === "정상" ? "ok" : "fallback"}>{status}</em></div>)}
+          </div></div>
+          <div className="panel audit-panel"><div className="panel-head compact"><div><p>AUDIT TRAIL</p><h2>실행 검증</h2></div></div><dl><div><dt>실행번호</dt><dd>ffc9dd1ad3</dd></div><div><dt>전체 KRX</dt><dd>2,713 종목</dd></div><div><dt>유동성 적격</dt><dd>803 종목</dd></div><div><dt>Python 테스트</dt><dd>10 / 10 통과</dd></div><div><dt>AI 구조화 출력</dt><dd>Strict JSON Schema</dd></div></dl></div>
+        </section>
 
-      <section className="disclosure">
-        <strong>읽기 전용 검증 스냅샷</strong>
-        <p>이 페이지는 기능과 소규모 실행 결과를 보여주는 정적 사이트입니다. 실제 대시보드는 로컬 Streamlit 앱에서 보유 종목과 운용자금을 입력해 실행합니다. 예측은 확률적 추정이며 수익을 보장하지 않고 주문은 자동 전송되지 않습니다.</p>
-      </section>
-      <footer><div className="brand"><span className="brand-mark">FM</span><span>AI Fund Manager</span></div><p>Forecast. Challenge. Act.</p><span>© 2026 · RESEARCH SYSTEM</span></footer>
+        <section className="method" id="method"><div><p className="eyebrow">HOW THE DECISION IS MADE</p><h2>판단이 만들어지는 순서</h2><p>모든 단계가 통과된 뒤에만 신규 매수가 가능합니다.</p></div><div className="process-grid">{process.map(([num,title,copy]) => <article key={num}><span>{num}</span><h3>{title}</h3><p>{copy}</p></article>)}</div></section>
+
+        <footer><div><strong>AI Fund Manager</strong><span>연구·의사결정 지원 시스템</span></div><p>자동 주문 기능 없음 · 투자 권유 아님 · 실제 투자 전 원문 데이터와 공시 확인 필요</p><span>© 2026</span></footer>
+      </div>
     </main>
   );
 }

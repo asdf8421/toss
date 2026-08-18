@@ -18,10 +18,10 @@ test("server-renders the AI fund manager snapshot", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
   assert.match(html, /AI Fund Manager/);
-  assert.match(html, /예측하고/);
-  assert.match(html, /GROQ 4 \/ 4/);
+  assert.match(html, /오늘의 투자 판단/);
+  assert.match(html, /Groq 4 \/ 4/);
   assert.match(html, /LG전자/);
-  assert.match(html, /BUY/);
+  assert.match(html, /24주 매수/);
   assert.match(html, /openai\/gpt-oss-120b/);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site/);
 });
@@ -29,8 +29,8 @@ test("server-renders the AI fund manager snapshot", async () => {
 test("renders evidence and risk disclosures", async () => {
   const response = await render();
   const html = await response.text();
-  assert.match(html, /미래 누출 검사/);
-  assert.match(html, /FAIL CLOSED/);
-  assert.match(html, /수익을 보장하지 않고 주문은 자동 전송되지 않습니다/);
-  assert.match(html, /ffc9dd1ad3264a0dbfecf872e4fafa49/);
+  assert.match(html, /AI가 숫자를 만들지 않습니다/);
+  assert.match(html, /API 실패 시 판단 중단/);
+  assert.match(html, /자동 주문 기능 없음/);
+  assert.match(html, /ffc9dd1ad3/);
 });

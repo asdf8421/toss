@@ -15,13 +15,13 @@ export async function generateMetadata(): Promise<Metadata> {
       title: "AI Fund Manager · 예측에서 행동까지",
       description: "퀀트 예측, Groq 근거 분석, 리스크 한도와 주문 계획을 하나로 연결했습니다.",
       type: "website",
-      images: [{ url: `${origin}/og.png`, width: 1200, height: 630, alt: "Evidence First AI Fund Manager" }],
+      images: [{ url: `${origin}/og-dashboard.png`, width: 1731, height: 909, alt: "AI Fund Manager 투자 의사결정 대시보드" }],
     },
     twitter: {
       card: "summary_large_image",
       title: "AI Fund Manager · 예측에서 행동까지",
       description: "퀀트 예측, Groq 근거 분석, 리스크 한도와 주문 계획을 하나로 연결했습니다.",
-      images: [`${origin}/og.png`],
+      images: [`${origin}/og-dashboard.png`],
     },
   };
 }
