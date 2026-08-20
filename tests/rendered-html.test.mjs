@@ -42,7 +42,8 @@ test("server-renders the live analysis shell without invented recommendations", 
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
   assert.match(html, /AI Fund Manager/);
-  assert.match(html, /실행 시점의 투자 판단/);
+  assert.match(html, /오늘 무엇을 해야 하는가/);
+  assert.match(html, /오늘 할 일/);
   assert.match(html, /실시간 호가 아님/);
   assert.match(html, /최신 분석을 불러오는 중입니다/);
   assert.doesNotMatch(html, /LG전자|24주 매수|ffc9dd1ad3/);

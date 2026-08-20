@@ -73,6 +73,14 @@ type Snapshot = {
   errors?: string[];
 };
 
+type ActionDirective = {
+  tone: "go" | "wait" | "stop";
+  badge: string;
+  headline: string;
+  summary: string;
+  steps: [string, string, string];
+};
+
 const actionNames: Record<string, string> = {
   BUY: "매수",
   WATCH: "관찰",
@@ -127,6 +135,8 @@ export default function Home() {
     };
   }, [snapshot]);
 
+  const directive = useMemo(() => snapshot ? buildActionDirective(snapshot) : null, [snapshot]);
+
   return (
     <main className="app-shell">
       <aside className="side-nav">
@@ -135,8 +145,8 @@ export default function Home() {
           <span><strong>AI Fund Manager</strong><small>Evidence First</small></span>
         </a>
         <nav aria-label="대시보드 메뉴">
-          <a className="active" href="#decision"><span>01</span> 투자 판단</a>
-          <a href="#compare"><span>02</span> 후보 비교</a>
+          <a className="active" href="#today-action"><span>01</span> 오늘 할 일</a>
+          <a href="#decision"><span>02</span> 종목별 판단</a>
           <a href="#evidence"><span>03</span> 근거 확인</a>
           <a href="#method"><span>04</span> 검증 기준</a>
         </nav>
@@ -156,13 +166,13 @@ export default function Home() {
         <header className="topbar">
           <div>
             <p className="eyebrow">LATEST VERIFIED DECISION</p>
-            <h1>실행 시점의 투자 판단</h1>
-            <p className="subtitle">정량 예측, 재무·수급·뉴스·공시, Groq 심사를 한 실행번호로 묶어 보여줍니다.</p>
+            <h1>오늘 무엇을 해야 하는가</h1>
+            <p className="subtitle">검증된 수치와 Groq 심사를 바탕으로 매수·매도·관찰·현금 유지 중 하나를 먼저 보여줍니다.</p>
           </div>
           <div className="report-meta">
             <span>최종 갱신</span>
             <strong>{snapshot ? formatDateTime(snapshot.generated_at) : "확인 중"}</strong>
-            <button type="button" className="refresh-button" onClick={() => void loadSnapshot()}>새로고침</button>
+            <button type="button" className="refresh-button" onClick={() => void loadSnapshot()}>최신 분석 다시 불러오기</button>
           </div>
         </header>
 
@@ -180,6 +190,26 @@ export default function Home() {
           </section>
         ) : (
           <>
+            {directive && (
+              <section className={`action-directive ${directive.tone}`} id="today-action" aria-labelledby="today-action-title">
+                <div className="directive-main">
+                  <div className="directive-label"><span>오늘의 행동</span><strong>{directive.badge}</strong></div>
+                  <h2 id="today-action-title">{directive.headline}</h2>
+                  <p>{directive.summary}</p>
+                </div>
+                <ol className="directive-steps" aria-label="오늘의 실행 순서">
+                  {directive.steps.map((step, index) => (
+                    <li key={step}><span>{index + 1}</span><strong>{step}</strong></li>
+                  ))}
+                </ol>
+                <div className="directive-allocation" aria-label="권장 자본 상태">
+                  <div><span>투자 예정</span><strong>{percent((snapshot.portfolio?.invested_weight ?? 0) * 100)}</strong></div>
+                  <div><span>현금 유지</span><strong>{percent((snapshot.portfolio?.cash_weight ?? 1) * 100)}</strong></div>
+                  <div><span>손절 기준 총위험</span><strong>{percent(snapshot.portfolio?.capital_at_risk_pct)}</strong></div>
+                </div>
+              </section>
+            )}
+
             <section className="run-context" aria-label="분석 실행 정보">
               <div><span>기준일</span><strong>{snapshot.as_of_date}</strong></div>
               <div><span>가격 검사</span><strong>{number(snapshot.coverage.price_screened)} / {number(snapshot.coverage.liquid_universe)}</strong></div>
@@ -339,6 +369,66 @@ function signedPercent(value?: number) { return typeof value === "number" ? `${v
 function won(value?: number) { return typeof value === "number" && Number.isFinite(value) ? `${Math.round(value).toLocaleString("ko-KR")}원` : "-"; }
 function numberValue(value: unknown) { return typeof value === "number" ? value : undefined; }
 function strategyName(value: string) { return ({ balanced: "균형", rebound: "반등", breakout: "돌파" } as Record<string, string>)[value] ?? value; }
+function buildActionDirective(snapshot: Snapshot): ActionDirective {
+  const rows = snapshot.decisions ?? [];
+  const exits = rows.filter((item) => ["SELL", "REDUCE"].includes(item.action));
+  const buys = rows.filter((item) => item.action === "BUY");
+  const holds = rows.filter((item) => item.action === "HOLD");
+  const watches = rows.filter((item) => item.action === "WATCH");
+  const cash = percent((snapshot.portfolio?.cash_weight ?? 1) * 100);
+
+  if (exits.length > 0) {
+    const names = decisionNames(exits);
+    return {
+      tone: "stop",
+      badge: "매도·축소 우선",
+      headline: `${names} 비중을 줄이거나 매도하세요`,
+      summary: "신규 매수보다 기존 위험을 먼저 낮추라는 판단입니다. 주문 수량과 손절 기준을 종목 카드에서 확인하세요.",
+      steps: [`${names} 주문 계획 확인`, "보유 수량과 손절가 대조", `남은 자금 ${cash} 현금 유지`],
+    };
+  }
+  if (buys.length > 0) {
+    const names = decisionNames(buys);
+    return {
+      tone: "go",
+      badge: "매수 검토 가능",
+      headline: `${names} 매수를 검토하세요`,
+      summary: "정량 관문과 AI 심사를 모두 통과한 후보입니다. 표시된 주문 수량과 손절가를 지킬 수 있을 때만 실행하세요.",
+      steps: [`${names} 주문 수량 확인`, "기준가와 현재가 비교", "손절가를 주문 전에 기록"],
+    };
+  }
+  if (holds.length > 0) {
+    const names = decisionNames(holds);
+    return {
+      tone: "wait",
+      badge: "기존 보유 유지",
+      headline: `${names}은 보유하되 신규 매수는 기다리세요`,
+      summary: "현재 포지션은 유지할 수 있지만 추가 자본을 넣을 근거는 부족합니다. 손절 기준을 먼저 확인하세요.",
+      steps: [`${names} 보유 수량 유지`, "손절가 이탈 여부 확인", `신규 자금 ${cash} 현금 유지`],
+    };
+  }
+  if (watches.length > 0) {
+    const names = decisionNames(watches);
+    return {
+      tone: "wait",
+      badge: "관찰·대기",
+      headline: "오늘은 신규 매수하지 말고 관찰하세요",
+      summary: `${names}은 아직 매수 조건을 충족하지 못했습니다. 조건이 바뀔 때까지 주문하지 않고 현금을 유지합니다.`,
+      steps: ["신규 매수 주문 보류", `${names} 조건 변화 관찰`, `가용 자금 ${cash} 현금 유지`],
+    };
+  }
+  return {
+    tone: "stop",
+    badge: "매수 보류",
+    headline: "오늘은 신규 매수하지 마세요",
+    summary: "검증 관문을 통과한 종목이 없습니다. 임의로 종목을 고르지 말고 다음 분석까지 현금을 유지합니다.",
+    steps: ["신규 주문 생성 금지", "매수 제외 사유 확인", `가용 자금 ${cash} 현금 유지`],
+  };
+}
+function decisionNames(rows: Decision[]) {
+  const names = rows.slice(0, 2).map((item) => item.name).join("·");
+  return rows.length > 2 ? `${names} 외 ${rows.length - 2}종목` : names;
+}
 function regimeText(value?: MarketRegime, fallbackReason?: string) {
   const code = typeof value === "string" ? value : value?.regime;
   const reason = typeof value === "object" && value ? value.reason : fallbackReason;
