@@ -141,6 +141,7 @@ body :where(h1,h2,h3,.brand-symbol,.action,.directive-label strong) { font-weigh
 .analysis-progress span { color:#344054; font-size:13px; }
 .analysis-progress small { color:#475467; font-size:12px; white-space:nowrap; }
 .analysis-progress.complete { border-color:#6ce9a6; background:var(--green-soft); }
+.analysis-progress.cooldown { border-color:#f5c451; background:#fff9e8; }
 .analysis-progress.failed { border-color:#fda29b; background:var(--red-soft); }
 .progress-track { height:10px; overflow:hidden; border-radius:20px; background:#d7e4ff; }
 .progress-track i { display:block; width:42%; height:100%; border-radius:inherit; background:var(--blue); animation:analysis-progress 1.5s ease-in-out infinite alternate; }

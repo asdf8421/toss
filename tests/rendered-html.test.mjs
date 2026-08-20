@@ -184,6 +184,11 @@ test("queues a fresh analysis and marks it complete when the new snapshot arrive
     const state = await complete.json();
     assert.equal(state.status, "complete");
     assert.equal(state.completed_run_id, "new-live-run");
+    assert.ok(state.retry_after_seconds > 0);
+
+    const coolingDown = await worker.fetch(new Request("http://localhost/api/analyze", { method: "POST" }), env, ctx);
+    assert.equal(coolingDown.status, 429);
+    assert.ok((await coolingDown.json()).retry_after_seconds > 0);
   } finally {
     globalThis.fetch = originalFetch;
   }

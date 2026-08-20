@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS analysis_requests (
   failure_message TEXT
 )`;
 
-const ANALYSIS_COOLDOWN_MS = 30 * 60 * 1000;
+const ANALYSIS_COOLDOWN_MS = 5 * 60 * 1000;
 const ANALYSIS_TIMEOUT_MS = 55 * 60 * 1000;
 
 type AnalysisRequestRow = {
@@ -199,15 +199,16 @@ async function handleAnalysis(request: Request, env: Env): Promise<Response> {
 
   const latest = await latestAnalysisRequest(env.DB);
   if (latest) {
-    const age = Date.now() - Date.parse(latest.requested_at);
-    if (latest.status === "queued" && age < ANALYSIS_TIMEOUT_MS) {
+    const requestAge = Date.now() - Date.parse(latest.requested_at);
+    if (latest.status === "queued" && requestAge < ANALYSIS_TIMEOUT_MS) {
       return jsonResponse(publicAnalysisState(latest), 202);
     }
-    if (latest.status !== "failed" && age < ANALYSIS_COOLDOWN_MS) {
+    const retryAfterSeconds = analysisRetryAfterSeconds(latest);
+    if (retryAfterSeconds > 0) {
       return jsonResponse({
         ...publicAnalysisState(latest),
         error: "analysis_cooldown",
-        retry_after_seconds: Math.ceil((ANALYSIS_COOLDOWN_MS - age) / 1000),
+        retry_after_seconds: retryAfterSeconds,
       }, 429);
     }
   }
@@ -295,7 +296,11 @@ async function currentAnalysisState(db: D1Database): Promise<Record<string, unkn
     ).bind(new Date().toISOString(), message, latest.request_id).run();
     return { ...publicAnalysisState(latest), status: "failed", message };
   }
-  return publicAnalysisState(latest);
+  const state = publicAnalysisState(latest);
+  const retryAfterSeconds = analysisRetryAfterSeconds(latest);
+  return retryAfterSeconds > 0
+    ? { ...state, retry_after_seconds: retryAfterSeconds }
+    : state;
 }
 
 async function latestAnalysisRequest(db: D1Database): Promise<AnalysisRequestRow | null> {
@@ -321,6 +326,13 @@ function publicAnalysisState(row: AnalysisRequestRow): Record<string, unknown> {
     completed_run_id: row.completed_run_id,
     message: messages[row.status] ?? "분석 상태를 확인하고 있습니다.",
   };
+}
+
+function analysisRetryAfterSeconds(row: AnalysisRequestRow): number {
+  if (row.status !== "complete") return 0;
+  const cooldownStartedAt = row.completed_at ?? row.requested_at;
+  const age = Date.now() - Date.parse(cooldownStartedAt);
+  return Math.max(0, Math.ceil((ANALYSIS_COOLDOWN_MS - age) / 1000));
 }
 
 async function failAnalysisRequest(db: D1Database, requestId: string, message: string): Promise<Response> {

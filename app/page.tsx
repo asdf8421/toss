@@ -83,7 +83,7 @@ type ActionDirective = {
 
 type AnalysisState = {
   request_id?: string;
-  status: "idle" | "queued" | "complete" | "failed";
+  status: "idle" | "queued" | "complete" | "failed" | "cooldown";
   requested_at?: string;
   completed_at?: string;
   completed_run_id?: string;
@@ -107,6 +107,7 @@ export default function Home() {
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [analysisState, setAnalysisState] = useState<AnalysisState>({ status: "idle" });
   const [analysisRequesting, setAnalysisRequesting] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
 
   const loadSnapshot = useCallback(async () => {
     setStatus((current) => (current === "ready" ? current : "loading"));
@@ -132,7 +133,13 @@ export default function Home() {
       const response = await fetch("/api/analyze", { cache: "no-store" });
       if (!response.ok) return;
       const next = (await response.json()) as AnalysisState;
-      setAnalysisState(next);
+      const retryAfter = Math.max(0, Number(next.retry_after_seconds ?? 0));
+      setCooldownSeconds(retryAfter);
+      setAnalysisState(
+        next.status === "complete" && retryAfter > 0
+          ? { ...next, status: "cooldown" }
+          : next,
+      );
       if (next.status === "complete") void loadSnapshot();
     } catch {
       // Snapshot display remains usable even when the trigger status endpoint is unavailable.
@@ -144,6 +151,13 @@ export default function Home() {
     try {
       const response = await fetch("/api/analyze", { method: "POST", cache: "no-store" });
       const next = (await response.json()) as AnalysisState;
+      const retryAfter = Math.max(0, Number(next.retry_after_seconds ?? 0));
+      if (response.status === 429 && retryAfter > 0) {
+        setCooldownSeconds(retryAfter);
+        setAnalysisState({ ...next, status: "cooldown" });
+        return;
+      }
+      setCooldownSeconds(0);
       setAnalysisState(next);
       if (!response.ok && !next.status) {
         setAnalysisState({ status: "failed", message: "분석 실행 요청을 시작하지 못했습니다." });
@@ -170,6 +184,22 @@ export default function Home() {
     const timer = window.setInterval(() => void loadAnalysisState(), 10_000);
     return () => window.clearInterval(timer);
   }, [analysisState.status, loadAnalysisState]);
+
+  useEffect(() => {
+    if (cooldownSeconds <= 0) return;
+    const timer = window.setInterval(() => {
+      setCooldownSeconds((current) => {
+        const next = Math.max(0, current - 1);
+        if (next === 0) {
+          setAnalysisState((state) => state.status === "cooldown"
+            ? { ...state, status: "complete", retry_after_seconds: 0 }
+            : state);
+        }
+        return next;
+      });
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, [cooldownSeconds > 0]);
 
   const selected = useMemo(
     () => snapshot?.decisions.find((item) => item.ticker === selectedTicker) ?? snapshot?.decisions[0],
@@ -226,9 +256,9 @@ export default function Home() {
               type="button"
               className="analysis-button"
               onClick={() => void startAnalysis()}
-              disabled={analysisRequesting || analysisState.status === "queued"}
+              disabled={analysisRequesting || analysisState.status === "queued" || cooldownSeconds > 0}
             >
-              {analysisButtonText(analysisState.status, analysisRequesting)}
+              {analysisButtonText(analysisState.status, analysisRequesting, cooldownSeconds)}
             </button>
             <button type="button" className="refresh-button" onClick={() => void loadSnapshot()}>화면만 새로고침</button>
           </div>
@@ -243,7 +273,9 @@ export default function Home() {
           <section className={`analysis-progress ${analysisState.status}`} aria-live="polite">
             <div>
               <strong>{analysisStatusTitle(analysisState.status)}</strong>
-              <span>{analysisState.message ?? "분석 상태를 확인하고 있습니다."}</span>
+              <span>{analysisState.status === "cooldown"
+                ? `최신 분석이 반영됐습니다. ${formatCooldown(cooldownSeconds)} 후 다시 실행할 수 있습니다.`
+                : analysisState.message ?? "분석 상태를 확인하고 있습니다."}</span>
             </div>
             {analysisState.status === "queued" && <div className="progress-track"><i /></div>}
             {analysisState.requested_at && <small>요청 시각 {formatDateTime(analysisState.requested_at)}</small>}
@@ -438,14 +470,21 @@ function signedPercent(value?: number) { return typeof value === "number" ? `${v
 function won(value?: number) { return typeof value === "number" && Number.isFinite(value) ? `${Math.round(value).toLocaleString("ko-KR")}원` : "-"; }
 function numberValue(value: unknown) { return typeof value === "number" ? value : undefined; }
 function strategyName(value: string) { return ({ balanced: "균형", rebound: "반등", breakout: "돌파" } as Record<string, string>)[value] ?? value; }
-function analysisButtonText(status: AnalysisState["status"], requesting: boolean) {
+function analysisButtonText(status: AnalysisState["status"], requesting: boolean, cooldownSeconds: number) {
   if (requesting) return "분석 요청 보내는 중...";
   if (status === "queued") return "지금 최신 데이터 분석 중...";
+  if (cooldownSeconds > 0) return `${formatCooldown(cooldownSeconds)} 후 다시 분석`;
   if (status === "failed") return "지금 다시 분석 재시도";
   return "지금 시간 기준으로 다시 분석";
 }
 function analysisStatusTitle(status: AnalysisState["status"]) {
-  return ({ queued: "새 분석을 실행하고 있습니다", complete: "새 분석이 완료됐습니다", failed: "분석 실행을 완료하지 못했습니다", idle: "분석 대기" } as Record<AnalysisState["status"], string>)[status];
+  return ({ queued: "새 분석을 실행하고 있습니다", complete: "새 분석이 완료됐습니다", failed: "분석 실행을 완료하지 못했습니다", cooldown: "최신 분석 반영 완료", idle: "분석 대기" } as Record<AnalysisState["status"], string>)[status];
+}
+function formatCooldown(seconds: number) {
+  const safe = Math.max(0, Math.ceil(seconds));
+  const minutes = Math.floor(safe / 60);
+  const remainder = safe % 60;
+  return minutes > 0 ? `${minutes}분 ${remainder}초` : `${remainder}초`;
 }
 function buildActionDirective(snapshot: Snapshot): ActionDirective {
   const rows = snapshot.decisions ?? [];
