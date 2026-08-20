@@ -203,7 +203,7 @@ async function handleAnalysis(request: Request, env: Env): Promise<Response> {
     if (latest.status === "queued" && age < ANALYSIS_TIMEOUT_MS) {
       return jsonResponse(publicAnalysisState(latest), 202);
     }
-    if (age < ANALYSIS_COOLDOWN_MS) {
+    if (latest.status !== "failed" && age < ANALYSIS_COOLDOWN_MS) {
       return jsonResponse({
         ...publicAnalysisState(latest),
         error: "analysis_cooldown",

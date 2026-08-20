@@ -147,10 +147,24 @@ test("queues a fresh analysis and marks it complete when the new snapshot arrive
     const queued = await worker.fetch(new Request("http://localhost/api/analyze", { method: "POST" }), env, ctx);
     assert.equal(queued.status, 202);
     assert.match(dispatchUrl, /publish-analysis\.yml\/dispatches$/);
-    assert.equal((await queued.json()).status, "queued");
+    const firstRequest = await queued.json();
+    assert.equal(firstRequest.status, "queued");
 
     const running = await worker.fetch(new Request("http://localhost/api/analyze"), env, ctx);
     assert.equal((await running.json()).status, "queued");
+
+    const failed = await worker.fetch(new Request("http://localhost/api/analyze/callback", {
+      method: "POST",
+      headers: { authorization: "Bearer snapshot-test-token", "content-type": "application/json" },
+      body: JSON.stringify({ request_id: firstRequest.request_id, status: "failed", message: "Groq schema error" }),
+    }), env, ctx);
+    assert.equal(failed.status, 200);
+
+    const retry = await worker.fetch(new Request("http://localhost/api/analyze", { method: "POST" }), env, ctx);
+    assert.equal(retry.status, 202);
+    const retryState = await retry.json();
+    assert.equal(retryState.status, "queued");
+    assert.notEqual(retryState.request_id, firstRequest.request_id);
 
     const snapshot = {
       schema_version: 1,
