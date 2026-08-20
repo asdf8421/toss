@@ -93,25 +93,45 @@ class AIJudge:
                 base_url="https://api.groq.com/openai/v1",
                 api_key=self.config.groq_api_key,
             )
-            response = client.chat.completions.create(
-                model=self.config.groq_model,
-                temperature=0,
-                max_tokens=1400,
-                reasoning_effort="low",
-                response_format=_response_format(allowed_actions),
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are an evidence-bound Korean equity decision analyst. "
-                            "Use only supplied facts, obey allowed_actions, and return JSON only."
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-            )
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an evidence-bound Korean equity decision analyst. "
+                        "Use only supplied facts, obey allowed_actions, and return JSON only."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ]
+            source = "GROQ"
+            try:
+                response = client.chat.completions.create(
+                    model=self.config.groq_model,
+                    temperature=0,
+                    max_tokens=1400,
+                    reasoning_effort="low",
+                    response_format=_response_format(allowed_actions),
+                    messages=messages,
+                )
+            except Exception as structured_error:
+                if not _is_schema_validation_error(structured_error):
+                    raise
+                response = client.chat.completions.create(
+                    model=self.config.groq_model,
+                    temperature=0,
+                    max_tokens=1400,
+                    reasoning_effort="low",
+                    response_format={"type": "json_object"},
+                    messages=messages,
+                )
+                source = "GROQ_JSON_FALLBACK"
             parsed = _parse_json(response.choices[0].message.content or "")
-            return self._validate_review(parsed, candidate, source="GROQ")
+            review = self._validate_review(parsed, candidate, source=source)
+            if source == "GROQ_JSON_FALLBACK":
+                review["audit_notes"].append(
+                    "Groq 엄격 스키마 실패 후 JSON 객체를 재요청하고 로컬 안전 규칙으로 검증"
+                )
+            return review
         except Exception as exc:
             return self._unavailable(
                 f"Groq 분석 실패: {type(exc).__name__}: {exc}",
@@ -267,6 +287,15 @@ def _parse_json(text: str) -> dict[str, Any]:
         if not match:
             raise ValueError("AI response did not contain a JSON object")
         return json.loads(match.group(0))
+
+
+def _is_schema_validation_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "json_validate_failed" in message
+        or "does not match the expected schema" in message
+        or "failed_generation" in message
+    )
 
 
 def _string_list(value: Any) -> list[str]:

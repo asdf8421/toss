@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -166,6 +168,56 @@ class ValidationAndRiskTests(unittest.TestCase):
         )
         self.assertEqual(review["action"], "AVOID")
         self.assertEqual(review["source"], "HARD_GATE")
+
+    def test_ai_retries_schema_failure_and_revalidates_locally(self):
+        calls = []
+
+        class FakeCompletions:
+            def create(self, **kwargs):
+                calls.append(kwargs)
+                if len(calls) == 1:
+                    raise RuntimeError("json_validate_failed: failed_generation")
+                content = (
+                    '{"action":"WATCH","confidence":30,'
+                    '"forecast_summary":"제공된 예측만 검토",'
+                    '"thesis":"정량 관문상 관찰",'
+                    '"counter_thesis":"추가 데이터가 판단을 바꿀 수 있음",'
+                    '"catalysts":[],"risks":[],"data_gaps":[],'
+                    '"invalidation":[],"evidence_used":["quant_signal.action=WATCH"]}'
+                )
+                return SimpleNamespace(
+                    choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+                )
+
+        fake_client = SimpleNamespace(
+            chat=SimpleNamespace(completions=FakeCompletions())
+        )
+        candidate = {
+            "eligible": True,
+            "data_completeness": 0.8,
+            "forecast": {"status": "ok"},
+            "backtest": {"status": "ok", "sample_count": 8},
+            "risk": {"status": "ok", "stop_price": 90},
+            "quant_signal": {
+                "action": "WATCH",
+                "allowed_ai_actions": ["WATCH", "AVOID"],
+                "buy_gate_passed": False,
+            },
+        }
+        config = SimpleNamespace(
+            groq_api_key="gsk_test",
+            groq_model="openai/gpt-oss-120b",
+        )
+        with patch("ai_judge.OpenAI", return_value=fake_client):
+            review = AIJudge(config).review(candidate)
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]["response_format"]["type"], "json_schema")
+        self.assertEqual(calls[1]["response_format"], {"type": "json_object"})
+        self.assertEqual(review["action"], "WATCH")
+        self.assertEqual(review["confidence"], 30)
+        self.assertEqual(review["source"], "GROQ_JSON_FALLBACK")
+        self.assertTrue(review["audit_notes"])
 
     def test_holdings_parser_validates_and_normalizes(self):
         holdings, errors = parse_holdings("5930 12 71,500\n000660 3 185000")
