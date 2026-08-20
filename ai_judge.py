@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 
 from openai import OpenAI
@@ -105,7 +106,8 @@ class AIJudge:
             ]
             source = "GROQ"
             try:
-                response = client.chat.completions.create(
+                response = _create_with_rate_limit_retry(
+                    client.chat.completions.create,
                     model=self.config.groq_model,
                     temperature=0,
                     max_tokens=1400,
@@ -116,7 +118,8 @@ class AIJudge:
             except Exception as structured_error:
                 if not _is_schema_validation_error(structured_error):
                     raise
-                response = client.chat.completions.create(
+                response = _create_with_rate_limit_retry(
+                    client.chat.completions.create,
                     model=self.config.groq_model,
                     temperature=0,
                     max_tokens=1400,
@@ -296,6 +299,33 @@ def _is_schema_validation_error(exc: Exception) -> bool:
         or "does not match the expected schema" in message
         or "failed_generation" in message
     )
+
+
+def _create_with_rate_limit_retry(create: Any, **kwargs: Any) -> Any:
+    max_attempts = 5
+    for attempt in range(max_attempts):
+        try:
+            return create(**kwargs)
+        except Exception as exc:
+            delay = _rate_limit_delay(exc)
+            if delay is None or attempt == max_attempts - 1:
+                raise
+            time.sleep(delay)
+    raise RuntimeError("Groq 재시도 횟수를 초과했습니다.")
+
+
+def _rate_limit_delay(exc: Exception) -> float | None:
+    message = str(exc)
+    lowered = message.lower()
+    if "rate limit" not in lowered and "rate_limit_exceeded" not in lowered:
+        return None
+    match = re.search(r"try again in\s+([0-9.]+)\s*(ms|s)", lowered)
+    if not match:
+        return 6.0
+    delay = float(match.group(1))
+    if match.group(2) == "ms":
+        delay /= 1000
+    return min(30.0, max(1.0, delay + 0.75))
 
 
 def _string_list(value: Any) -> list[str]:

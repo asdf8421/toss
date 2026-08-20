@@ -219,6 +219,58 @@ class ValidationAndRiskTests(unittest.TestCase):
         self.assertEqual(review["source"], "GROQ_JSON_FALLBACK")
         self.assertTrue(review["audit_notes"])
 
+    def test_ai_waits_and_retries_groq_rate_limit(self):
+        calls = []
+
+        class FakeCompletions:
+            def create(self, **kwargs):
+                calls.append(kwargs)
+                if len(calls) == 1:
+                    raise RuntimeError(
+                        "Rate limit reached; rate_limit_exceeded. Please try again in 4.08s."
+                    )
+                content = (
+                    '{"action":"AVOID","confidence":20,'
+                    '"forecast_summary":"제공된 예측만 검토",'
+                    '"thesis":"정량 관문상 회피",'
+                    '"counter_thesis":"조건 개선 가능",'
+                    '"catalysts":[],"risks":[],"data_gaps":[],'
+                    '"invalidation":[],"evidence_used":["quant_signal.action=AVOID"]}'
+                )
+                return SimpleNamespace(
+                    choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+                )
+
+        fake_client = SimpleNamespace(
+            chat=SimpleNamespace(completions=FakeCompletions())
+        )
+        candidate = {
+            "eligible": True,
+            "data_completeness": 0.8,
+            "forecast": {"status": "ok"},
+            "backtest": {"status": "ok", "sample_count": 8},
+            "risk": {"status": "ok", "stop_price": 90},
+            "quant_signal": {
+                "action": "AVOID",
+                "allowed_ai_actions": ["WATCH", "AVOID"],
+                "buy_gate_passed": False,
+            },
+        }
+        config = SimpleNamespace(
+            groq_api_key="gsk_test",
+            groq_model="openai/gpt-oss-120b",
+        )
+        with (
+            patch("ai_judge.OpenAI", return_value=fake_client),
+            patch("ai_judge.time.sleep") as sleep,
+        ):
+            review = AIJudge(config).review(candidate)
+
+        self.assertEqual(len(calls), 2)
+        sleep.assert_called_once_with(4.83)
+        self.assertEqual(review["action"], "AVOID")
+        self.assertEqual(review["source"], "GROQ")
+
     def test_holdings_parser_validates_and_normalizes(self):
         holdings, errors = parse_holdings("5930 12 71,500\n000660 3 185000")
         self.assertFalse(errors)
