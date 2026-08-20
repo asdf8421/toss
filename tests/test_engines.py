@@ -249,7 +249,15 @@ class SnapshotTests(unittest.TestCase):
             "liquid_universe_count": 371,
             "filtered_universe_count": 80,
             "deep_analysis_count": 1,
-            "portfolio": {"cash_weight": 1.0, "positions": []},
+            "portfolio": {
+                "regime": {
+                    "regime": "neutral",
+                    "cash_target": 0.3,
+                    "reason": "추세 조건 혼재",
+                },
+                "cash_weight": 1.0,
+                "positions": [],
+            },
             "data_status": {},
             "errors": [],
             "ranked": [
@@ -279,6 +287,8 @@ class SnapshotTests(unittest.TestCase):
         }
         snapshot = build_public_snapshot(result)
         self.assertEqual(snapshot["run_id"], "verified-run")
+        self.assertEqual(snapshot["portfolio"]["regime"], "neutral")
+        self.assertEqual(snapshot["portfolio"]["regime_reason"], "추세 조건 혼재")
         self.assertEqual(snapshot["decisions"][0]["evidence"]["news"][0]["title"], "검증 기사")
         self.assertNotIn("indicators", snapshot["decisions"][0])
 

@@ -81,6 +81,13 @@ def build_public_snapshot(result: dict[str, Any]) -> dict[str, Any]:
         )
 
     portfolio = result.get("portfolio") or {}
+    regime = portfolio.get("regime")
+    if isinstance(regime, dict):
+        regime_name = regime.get("regime")
+        regime_reason = regime.get("reason")
+    else:
+        regime_name = regime
+        regime_reason = portfolio.get("regime_reason")
     return {
         "schema_version": 1,
         "run_id": result.get("run_id"),
@@ -99,7 +106,8 @@ def build_public_snapshot(result: dict[str, Any]) -> dict[str, Any]:
         },
         "data_status": result.get("data_status") or {},
         "portfolio": {
-            "regime": portfolio.get("regime"),
+            "regime": regime_name,
+            "regime_reason": regime_reason,
             "invested_weight": portfolio.get("invested_weight", 0),
             "cash_weight": portfolio.get("cash_weight", 1),
             "capital_at_risk_pct": portfolio.get("capital_at_risk_pct", 0),

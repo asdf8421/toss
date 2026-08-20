@@ -8,6 +8,14 @@ type Horizon = {
   up_probability_pct?: number;
 };
 
+type MarketRegime =
+  | string
+  | {
+      regime?: string;
+      cash_target?: number;
+      reason?: string;
+    };
+
 type Decision = {
   ticker: string;
   name: string;
@@ -55,7 +63,8 @@ type Snapshot = {
   };
   data_status?: Record<string, unknown>;
   portfolio?: {
-    regime?: string;
+    regime?: MarketRegime;
+    regime_reason?: string;
     invested_weight?: number;
     cash_weight?: number;
     capital_at_risk_pct?: number;
@@ -230,7 +239,7 @@ export default function Home() {
                   <div className="allocation-bar"><i style={{ width: `${Math.min(100, (snapshot.portfolio?.invested_weight ?? 0) * 100)}%` }} /></div>
                   <div className="allocation-legend"><span><i className="invested" />투자</span><span><i className="cash" />현금 {percent((snapshot.portfolio?.cash_weight ?? 1) * 100)}</span></div>
                   <dl>
-                    <div><dt>시장 국면</dt><dd>{snapshot.portfolio?.regime ?? "확인 불가"}</dd></div>
+                    <div><dt>시장 국면</dt><dd>{regimeText(snapshot.portfolio?.regime, snapshot.portfolio?.regime_reason)}</dd></div>
                     <div><dt>손절 기준 총위험</dt><dd>{percent(snapshot.portfolio?.capital_at_risk_pct)}</dd></div>
                     <div><dt>오류 수</dt><dd>{snapshot.errors?.length ?? 0}건</dd></div>
                   </dl>
@@ -330,5 +339,12 @@ function signedPercent(value?: number) { return typeof value === "number" ? `${v
 function won(value?: number) { return typeof value === "number" && Number.isFinite(value) ? `${Math.round(value).toLocaleString("ko-KR")}원` : "-"; }
 function numberValue(value: unknown) { return typeof value === "number" ? value : undefined; }
 function strategyName(value: string) { return ({ balanced: "균형", rebound: "반등", breakout: "돌파" } as Record<string, string>)[value] ?? value; }
+function regimeText(value?: MarketRegime, fallbackReason?: string) {
+  const code = typeof value === "string" ? value : value?.regime;
+  const reason = typeof value === "object" && value ? value.reason : fallbackReason;
+  if (!code) return "확인 불가";
+  const label = ({ bull: "강세", neutral: "중립", bear: "약세", unknown: "판단 보류" } as Record<string, string>)[code.toLowerCase()] ?? code;
+  return reason ? `${label} · ${reason}` : label;
+}
 function formatDateTime(value: string) { try { return new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Seoul" }).format(new Date(value)); } catch { return value; } }
 function orderText(plan: Record<string, unknown>) { const side = String(plan.order_side ?? "NONE"); const qty = Number(plan.order_quantity ?? 0); return side === "BUY" && qty > 0 ? `${qty.toLocaleString("ko-KR")}주 매수` : side === "SELL" && qty > 0 ? `${qty.toLocaleString("ko-KR")}주 매도` : "주문 없음"; }
