@@ -12,8 +12,9 @@ from snapshot_export import write_public_snapshot
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="유동성 적격 KRX 전체를 캐시·재개 가능한 방식으로 분석합니다."
+        description="한국 또는 미국의 유동성 적격 종목을 캐시·재개 가능한 방식으로 분석합니다."
     )
+    parser.add_argument("--market", choices=["kr", "us"], default="kr")
     parser.add_argument("--strategy", choices=["balanced", "rebound", "breakout"], default="balanced")
     parser.add_argument("--max-positions", type=int, default=5)
     parser.add_argument("--as-of", default=date.today().isoformat())
@@ -36,9 +37,10 @@ def main() -> int:
     if as_of != date.today():
         print("[FAIL] 현재 공급원은 과거 시점 시장·재무 스냅샷을 보장하지 않으므로 오늘 날짜만 허용합니다.")
         return 2
-    pipeline = FundManagerPipeline(config)
+    market_scope = args.market.upper()
+    pipeline = FundManagerPipeline(config, market_scope=market_scope)
     scope = "full" if args.limit <= 0 else f"sample{args.limit}"
-    job_id = f"{scope}-{as_of:%Y%m%d}-{args.strategy}"
+    job_id = f"{market_scope.lower()}-{scope}-{as_of:%Y%m%d}-{args.strategy}"
     pipeline.storage.start_batch_job(job_id, as_of.isoformat(), args.strategy)
     last_reported: dict[str, int] = {}
 

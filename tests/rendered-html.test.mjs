@@ -26,6 +26,9 @@ class FakeD1 {
       sql,
       args: [],
       bind(...args) { this.args = args; return this; },
+      async all() {
+        return { results: [{ name: "market_scope" }] };
+      },
       async first() {
         if (sql.includes("SELECT payload_json") && db.payload) return { payload_json: db.payload };
         if (sql.includes("SELECT run_id FROM analysis_snapshots") && db.payload) {
@@ -38,9 +41,10 @@ class FakeD1 {
         if (sql.includes("INSERT INTO analysis_requests")) {
           db.request = {
             request_id: this.args[0],
+            market_scope: this.args[1],
             status: "queued",
-            requested_at: this.args[1],
-            previous_run_id: this.args[2],
+            requested_at: this.args[2],
+            previous_run_id: this.args[3],
             completed_at: null,
             completed_run_id: null,
             failure_message: null,
@@ -55,7 +59,7 @@ class FakeD1 {
   }
   async batch(statements) {
     for (const statement of statements) {
-      if (statement.sql.includes("INSERT INTO analysis_snapshots")) this.payload = statement.args[3];
+      if (statement.sql.includes("INSERT INTO analysis_snapshots")) this.payload = statement.args[4];
       if (statement.sql.includes("UPDATE analysis_requests") && statement.sql.includes("status='complete'") && this.request) {
         this.request = {
           ...this.request,

@@ -8,12 +8,20 @@ on:
         required: false
         default: false
         type: boolean
+      market:
+        description: Market scope (kr or us)
+        required: false
+        default: kr
+        type: choice
+        options:
+          - kr
+          - us
   schedule:
     - cron: "5 0-6 * * 1-5"
     - cron: "30 6 * * 1-5"
 
 concurrency:
-  group: verified-market-analysis
+  group: verified-market-analysis-${{ inputs.market || 'kr' }}
   cancel-in-progress: false
 
 jobs:
@@ -60,6 +68,7 @@ jobs:
             DEEP_LIMIT=12
           fi
           python -B batch_runner.py \
+            --market "${{ inputs.market || 'kr' }}" \
             --strategy balanced \
             --max-positions 5 \
             --workers 4 \

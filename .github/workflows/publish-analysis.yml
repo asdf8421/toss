@@ -13,9 +13,17 @@ on:
         required: false
         default: ""
         type: string
+      market:
+        description: Market scope (kr or us)
+        required: false
+        default: kr
+        type: choice
+        options:
+          - kr
+          - us
 
 concurrency:
-  group: verified-market-analysis
+  group: verified-market-analysis-${{ inputs.market || 'kr' }}
   cancel-in-progress: false
 
 jobs:
@@ -63,6 +71,7 @@ jobs:
             DEEP_LIMIT=12
           fi
           python -B batch_runner.py \
+            --market "${{ inputs.market || 'kr' }}" \
             --strategy balanced \
             --max-positions 5 \
             --workers 4 \
@@ -87,5 +96,5 @@ jobs:
           curl --fail-with-body --retry 3 --retry-all-errors \
             -H "Authorization: Bearer $SNAPSHOT_WRITE_TOKEN" \
             -H "Content-Type: application/json" \
-            --data "{\"request_id\":\"${{ inputs.request_id }}\",\"status\":\"failed\",\"message\":\"분석 작업이 완료되지 않았습니다. 실행 로그를 확인해 주세요.\"}" \
+            --data "{\"request_id\":\"${{ inputs.request_id }}\",\"status\":\"failed\",\"market_scope\":\"${{ inputs.market || 'kr' }}\",\"message\":\"분석 작업이 완료되지 않았습니다. 실행 로그를 확인해 주세요.\"}" \
             "$ANALYSIS_CALLBACK_ENDPOINT"

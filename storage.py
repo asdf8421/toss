@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS investor_flows (
     date TEXT NOT NULL,
     foreign_net REAL,
     institution_net REAL,
+    direct_score REAL,
+    method TEXT,
     source TEXT NOT NULL,
     status TEXT NOT NULL,
     error TEXT,
@@ -225,6 +227,14 @@ class Storage:
             for column, column_type in additions.items():
                 if column not in existing:
                     conn.execute(f"ALTER TABLE news ADD COLUMN {column} {column_type}")
+            flow_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(investor_flows)").fetchall()
+            }
+            for column, column_type in {"direct_score": "REAL", "method": "TEXT"}.items():
+                if column not in flow_columns:
+                    conn.execute(
+                        f"ALTER TABLE investor_flows ADD COLUMN {column} {column_type}"
+                    )
 
     def upsert_universe(self, rows: Iterable[dict[str, Any]]) -> None:
         sql = """
@@ -347,16 +357,23 @@ class Storage:
         return dict(row) if row else None
 
     def upsert_flow(self, values: dict[str, Any]) -> None:
+        values = {**values}
+        values.setdefault("direct_score", None)
+        values.setdefault("method", None)
         with self.connect() as conn:
             conn.execute(
                 """
                 INSERT INTO investor_flows (
-                    ticker,date,foreign_net,institution_net,source,status,error,fetched_at
+                    ticker,date,foreign_net,institution_net,direct_score,method,
+                    source,status,error,fetched_at
                 ) VALUES (
-                    :ticker,:date,:foreign_net,:institution_net,:source,:status,:error,:fetched_at
+                    :ticker,:date,:foreign_net,:institution_net,:direct_score,:method,
+                    :source,:status,:error,:fetched_at
                 ) ON CONFLICT(ticker,date,source) DO UPDATE SET
                     foreign_net=excluded.foreign_net,
                     institution_net=excluded.institution_net,
+                    direct_score=excluded.direct_score,
+                    method=excluded.method,
                     status=excluded.status,error=excluded.error,fetched_at=excluded.fetched_at
                 """,
                 values,

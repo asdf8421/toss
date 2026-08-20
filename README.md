@@ -53,6 +53,15 @@ Groq가 `BUY`로 판단한 종목에만 위험 예산을 배정합니다.
 - 투자자 수급: pykrx/KRX (`KRX_ID`, `KRX_PW` 필요)
 - 공시: OpenDART (`DART_API_KEY` 필요)
 - AI 분석: Groq OpenAI 호환 API의 `openai/gpt-oss-120b` (`GROQ_API_KEY` 필요)
+
+미국 증시는 별도 탭과 독립 스냅샷으로 동작합니다. 유료 시세 구독 없이 네이버
+미국종목 시가총액·거래 스냅샷, FinanceDataReader의 Yahoo 무료 일봉, SEC EDGAR
+companyfacts·submissions, Google News RSS 헤드라인을 사용합니다. 미국판의 수급 점수는
+기관 보유량으로 위장하지 않고 10거래일 가격·거래량 압력 대용치로 명시합니다.
+
+```powershell
+.venv\Scripts\python.exe -B batch_runner.py --market us --limit 80 --deep-limit 12 --require-groq
+```
 - 영속 저장: `data/fund_manager.db` SQLite
 
 가격은 거래소 실시간 호가가 아니라 실행 시점에 공급원이 제공하는 최신 일봉입니다.

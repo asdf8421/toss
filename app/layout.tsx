@@ -10,7 +10,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     title: "AI Fund Manager · 예측에서 행동까지",
-    description: "5·20일 퀀트 예측과 Groq 분석으로 매수·보유·축소·매도 행동을 만드는 투자 의사결정 시스템.",
+    description: "한국·미국 증시의 무료 데이터, 5·20일 퀀트 예측과 Groq 분석으로 매수·보유·축소·매도 행동을 만드는 투자 의사결정 시스템.",
     openGraph: {
       title: "AI Fund Manager · 예측에서 행동까지",
       description: "퀀트 예측, Groq 근거 분석, 리스크 한도와 주문 계획을 하나로 연결했습니다.",

@@ -57,10 +57,17 @@ class AppConfig:
     request_timeout: int = int(os.getenv("REQUEST_TIMEOUT", "12"))
     verify_ssl: bool = _env_bool("VERIFY_SSL", True)
     news_detail_limit: int = int(os.getenv("NEWS_DETAIL_LIMIT", "3"))
+    us_universe_pages: int = int(os.getenv("US_UNIVERSE_PAGES", "10"))
+    sec_user_agent: str = os.getenv(
+        "SEC_USER_AGENT",
+        "EvidenceFirstFundManager/1.0 jjh4075161@gmail.com",
+    )
 
     # Universe safety filters. A value of 0 disables the corresponding filter.
     min_market_cap: float = float(os.getenv("MIN_MARKET_CAP", "50000000000"))
     min_daily_amount: float = float(os.getenv("MIN_DAILY_AMOUNT", "1000000000"))
+    us_min_market_cap: float = float(os.getenv("US_MIN_MARKET_CAP", "5000000000"))
+    us_min_daily_amount: float = float(os.getenv("US_MIN_DAILY_AMOUNT", "20000000"))
 
     # Backtest assumptions are round-trip costs in basis points.
     commission_bps: float = float(os.getenv("COMMISSION_BPS", "15"))
@@ -69,6 +76,7 @@ class AppConfig:
 
     # Portfolio risk policy.
     account_equity: float = float(os.getenv("ACCOUNT_EQUITY", "100000000"))
+    account_equity_usd: float = float(os.getenv("ACCOUNT_EQUITY_USD", "100000"))
     risk_per_trade: float = float(os.getenv("RISK_PER_TRADE", "0.0075"))
     max_position_pct: float = float(os.getenv("MAX_POSITION_PCT", "0.15"))
     max_sector_pct: float = float(os.getenv("MAX_SECTOR_PCT", "0.30"))
@@ -80,6 +88,7 @@ class AppConfig:
     )
     benchmark_kospi: str = os.getenv("BENCHMARK_KOSPI", "KS11")
     benchmark_kosdaq: str = os.getenv("BENCHMARK_KOSDAQ", "KQ11")
+    benchmark_us: str = os.getenv("BENCHMARK_US", "SPY")
 
     @property
     def groq_api_key(self) -> str:

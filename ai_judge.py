@@ -42,6 +42,8 @@ class AIJudge:
                 "sector": candidate.get("sector"),
                 "position_state": quant_signal.get("position_state"),
                 "holding": candidate.get("holding"),
+                "market_scope": candidate.get("market_scope", "KR"),
+                "currency": candidate.get("currency", "KRW"),
             },
             "strategy": candidate.get("strategy"),
             "allowed_actions": allowed_actions,
@@ -61,7 +63,7 @@ class AIJudge:
             "trade_levels": candidate.get("trade_plan", {}),
         }
         prompt = f"""
-당신은 한국 주식 포트폴리오의 최종 투자 분석가입니다. 제공된 정량 증거를 종합해 오늘의 행동을 하나 결정하십시오.
+당신은 한국·미국 주식 포트폴리오의 최종 투자 분석가입니다. identity.market_scope에 해당하는 시장의 제공된 정량 증거만 종합해 오늘의 행동을 하나 결정하십시오.
 
 절대 규칙:
 1. 아래 JSON에 없는 숫자·사실·뉴스·가격을 만들지 마십시오. 계산된 가격대도 그대로 인용하십시오.
@@ -98,7 +100,7 @@ class AIJudge:
                 {
                     "role": "system",
                     "content": (
-                        "You are an evidence-bound Korean equity decision analyst. "
+                        "You are an evidence-bound Korean and US equity decision analyst. "
                         "Use only supplied facts, obey allowed_actions, and return JSON only."
                     ),
                 },
@@ -236,7 +238,10 @@ class AIJudge:
         }
         stop = (candidate.get("risk") or {}).get("stop_price")
         if not result["invalidation"] and stop is not None:
-            result["invalidation"] = [f"위험 엔진 손절가 {float(stop):,.0f}원 이하"]
+            currency = candidate.get("currency", "KRW")
+            unit = "달러" if currency == "USD" else "원"
+            digits = 2 if currency == "USD" else 0
+            result["invalidation"] = [f"위험 엔진 손절가 {float(stop):,.{digits}f}{unit} 이하"]
         return result
 
 

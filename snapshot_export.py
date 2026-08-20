@@ -64,17 +64,21 @@ def build_public_snapshot(result: dict[str, Any]) -> dict[str, Any]:
                 "ai_review": review,
                 "evidence": {
                     "fundamental_status": facts.get("fundamental_status"),
+                    "fundamental_source": facts.get("fundamental_source"),
                     "fundamental_period": facts.get("fundamental_period"),
                     "fundamentals": facts.get("fundamentals") or {},
                     "flow_status": facts.get("flow_status"),
                     "flow_source": facts.get("flow_source"),
                     "flow_observations": facts.get("flow_observations"),
+                    "flow_method": facts.get("flow_method"),
                     "foreign_net": facts.get("foreign_net"),
                     "institution_net": facts.get("institution_net"),
                     "news_status": facts.get("news_status"),
+                    "news_source": facts.get("news_source"),
                     "news_detail_coverage": facts.get("news_detail_coverage"),
                     "news": facts.get("news") or [],
                     "disclosure_status": facts.get("disclosure_status"),
+                    "disclosure_source": facts.get("disclosure_source"),
                     "disclosures": facts.get("disclosures") or [],
                 },
             }
@@ -88,14 +92,19 @@ def build_public_snapshot(result: dict[str, Any]) -> dict[str, Any]:
     else:
         regime_name = regime
         regime_reason = portfolio.get("regime_reason")
+    market_scope = result.get("market_scope") or "KR"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "run_id": result.get("run_id"),
+        "market_scope": market_scope,
+        "currency": result.get("currency") or ("USD" if market_scope == "US" else "KRW"),
         "as_of_date": result.get("as_of_date"),
         "generated_at": utc_now(),
         "market_data_mode": "latest_available_daily_snapshot",
         "market_data_notice": (
-            "거래소 실시간 호가가 아니라 실행 시점에 공급원이 제공한 최신 일봉·뉴스·공시 스냅샷입니다."
+            "무료 네이버 미국종목 스냅샷·Yahoo 일봉·SEC 공시·Google News RSS를 실행 시점에 수집합니다. 실시간 통합호가는 아닙니다."
+            if market_scope == "US"
+            else "거래소 실시간 호가가 아니라 실행 시점에 공급원이 제공한 최신 일봉·뉴스·공시 스냅샷입니다."
         ),
         "strategy": result.get("strategy"),
         "coverage": {
@@ -110,7 +119,9 @@ def build_public_snapshot(result: dict[str, Any]) -> dict[str, Any]:
             "regime_reason": regime_reason,
             "invested_weight": portfolio.get("invested_weight", 0),
             "cash_weight": portfolio.get("cash_weight", 1),
-            "capital_at_risk_pct": portfolio.get("capital_at_risk_pct", 0),
+            "capital_at_risk_pct": portfolio.get(
+                "capital_at_risk_pct", portfolio.get("portfolio_stop_risk_pct", 0)
+            ),
             "positions": portfolio.get("positions") or [],
         },
         "decisions": decisions,

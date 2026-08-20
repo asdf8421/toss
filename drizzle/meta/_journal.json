@@ -15,6 +15,13 @@
       "when": 1787202319979,
       "tag": "0001_mighty_the_initiative",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787266525012,
+      "tag": "0002_early_supernaut",
+      "breakpoints": true
     }
   ]
 }

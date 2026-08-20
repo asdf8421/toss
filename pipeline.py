@@ -4,6 +4,7 @@ import json
 import math
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 from datetime import date
 from typing import Any, Callable
 
@@ -17,17 +18,29 @@ from quant_engine import score_stock
 from risk_engine import RiskEngine
 from storage import Storage, utc_now
 from validation_engine import walk_forward_backtest
+from us_data_engine import USDataEngine
 
 
 ProgressCallback = Callable[[str, int, int, str], None]
 
 
 class FundManagerPipeline:
-    def __init__(self, config: AppConfig | None = None):
+    def __init__(self, config: AppConfig | None = None, market_scope: str = "KR"):
         self.config = config or AppConfig()
+        self.market_scope = "US" if str(market_scope).upper() == "US" else "KR"
         self.storage = Storage(self.config.db_path)
-        self.data = DataEngine(self.config, self.storage)
-        self.risk = RiskEngine(self.config)
+        self.data = (
+            USDataEngine(self.config, self.storage)
+            if self.market_scope == "US"
+            else DataEngine(self.config, self.storage)
+        )
+        risk_config = (
+            replace(self.config, account_equity=self.config.account_equity_usd)
+            if self.market_scope == "US"
+            else self.config
+        )
+        self.risk = RiskEngine(risk_config)
+        self.account_equity = risk_config.account_equity
         self.judge = AIJudge(self.config)
 
     def run(
@@ -45,14 +58,15 @@ class FundManagerPipeline:
         as_of = as_of or date.today()
         callback = progress or (lambda stage, current, total, message: None)
         run_id = uuid.uuid4().hex
-        holdings_map = _normalize_holdings(holdings or [])
+        holdings_map = _normalize_holdings(holdings or [], self.market_scope)
 
-        callback("universe", 0, 1, "KRX 전체 종목과 보유 종목을 확인합니다.")
+        market_name = "미국 무료 상위 종목군" if self.market_scope == "US" else "KRX 전체 종목"
+        callback("universe", 0, 1, f"{market_name}과 보유 종목을 확인합니다.")
         full_universe = self.data.get_universe(as_of)
         liquid_universe = self.data.filter_universe(full_universe, 0)
         selected = liquid_universe.head(universe_limit) if universe_limit > 0 else liquid_universe
         holding_rows = full_universe[
-            full_universe["ticker"].astype(str).str.zfill(6).isin(holdings_map)
+            full_universe["ticker"].map(lambda value: _ticker(value, self.market_scope)).isin(holdings_map)
         ]
         universe = (
             pd.concat([selected, holding_rows], ignore_index=True)
@@ -66,17 +80,17 @@ class FundManagerPipeline:
         )
 
         rows = universe.to_dict("records")
-        row_map = {str(row["ticker"]).zfill(6): row for row in rows}
+        row_map = {_ticker(row["ticker"], self.market_scope): row for row in rows}
         price_results: dict[str, pd.DataFrame] = {}
         errors: list[str] = []
         with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
             futures = {
-                executor.submit(self.data.get_prices, str(row["ticker"]).zfill(6), as_of=as_of): row
+                executor.submit(self.data.get_prices, _ticker(row["ticker"], self.market_scope), as_of=as_of): row
                 for row in rows
             }
             for index, future in enumerate(as_completed(futures), start=1):
                 row = futures[future]
-                ticker = str(row["ticker"]).zfill(6)
+                ticker = _ticker(row["ticker"], self.market_scope)
                 try:
                     price_results[ticker] = future.result()
                 except Exception as exc:
@@ -85,7 +99,7 @@ class FundManagerPipeline:
 
         preliminary = []
         for row in rows:
-            ticker = str(row["ticker"]).zfill(6)
+            ticker = _ticker(row["ticker"], self.market_scope)
             score = score_stock(row, price_results.get(ticker, pd.DataFrame()), None, None, None, None, strategy)
             preliminary.append(score)
         preliminary.sort(key=lambda item: item["total_score"], reverse=True)
@@ -123,7 +137,11 @@ class FundManagerPipeline:
             except Exception as exc:
                 errors.append(f"{market} 벤치마크: {type(exc).__name__}: {exc}")
                 benchmark_cache[market] = (
-                    self.config.benchmark_kosdaq if market == "KOSDAQ" else self.config.benchmark_kospi,
+                    self.config.benchmark_us
+                    if self.market_scope == "US"
+                    else self.config.benchmark_kosdaq
+                    if market == "KOSDAQ"
+                    else self.config.benchmark_kospi,
                     pd.DataFrame(),
                 )
 
@@ -131,6 +149,8 @@ class FundManagerPipeline:
             ticker = candidate["ticker"]
             benchmark_symbol, benchmark = benchmark_cache[candidate["market"]]
             candidate["strategy"] = strategy
+            candidate["market_scope"] = self.market_scope
+            candidate["currency"] = "USD" if self.market_scope == "US" else "KRW"
             candidate["benchmark_symbol"] = benchmark_symbol
             candidate["backtest"] = walk_forward_backtest(
                 price_results.get(ticker, pd.DataFrame()),
@@ -162,14 +182,16 @@ class FundManagerPipeline:
             candidate["ai_review"] = self.judge.review(candidate, require_ai=require_ai)
             callback("judge", index, len(review_pool), f"Groq 최종 분석 {index}/{len(review_pool)}")
 
-        retained_holdings = _retained_holdings(review_pool, self.config.account_equity)
+        retained_holdings = _retained_holdings(review_pool, self.account_equity)
         investable = [
             item for item in review_pool
             if item.get("ai_review", {}).get("action") == "BUY"
         ]
+        primary_market = "NASDAQ" if self.market_scope == "US" else "KOSPI"
+        default_benchmark = self.config.benchmark_us if self.market_scope == "US" else "KS11"
         primary_benchmark = benchmark_cache.get(
-            "KOSPI",
-            next(iter(benchmark_cache.values()), ("KS11", pd.DataFrame())),
+            primary_market,
+            next(iter(benchmark_cache.values()), (default_benchmark, pd.DataFrame())),
         )[1]
         regime = self.risk.market_regime(primary_benchmark)
         portfolio = self.risk.construct_portfolio(
@@ -196,6 +218,7 @@ class FundManagerPipeline:
                 "commission_bps": self.config.commission_bps,
                 "slippage_bps": self.config.slippage_bps,
                 "require_ai": require_ai,
+                "market_scope": self.market_scope,
             },
         )
         self.storage.save_factor_scores(run_id, [_serializable_score(item) for item in enriched])
@@ -233,6 +256,8 @@ class FundManagerPipeline:
 
         return {
             "run_id": run_id,
+            "market_scope": self.market_scope,
+            "currency": "USD" if self.market_scope == "US" else "KRW",
             "as_of_date": as_of.isoformat(),
             "strategy": strategy,
             "universe_count": len(full_universe),
@@ -251,6 +276,7 @@ class FundManagerPipeline:
                 groq_configured=bool(self.config.groq_api_key),
                 krx_configured=self.config.krx_ready,
                 dart_configured=bool(self.config.dart_api_key),
+                market_scope=self.market_scope,
             ),
         }
 
@@ -261,7 +287,7 @@ class FundManagerPipeline:
         as_of: date,
         strategy: str,
     ) -> dict[str, Any]:
-        ticker = str(row["ticker"]).zfill(6)
+        ticker = _ticker(row["ticker"], self.market_scope)
         fundamental = self.data.get_fundamentals(ticker, as_of)
         flow = self.data.get_investor_flow(ticker, as_of)
         news = self.data.get_news(ticker, as_of)
@@ -269,16 +295,28 @@ class FundManagerPipeline:
         return score_stock(row, prices, fundamental, flow, news, disclosures, strategy)
 
 
-def _normalize_holdings(holdings: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _ticker(value: Any, market_scope: str) -> str:
+    text = str(value or "").strip().upper()
+    return text if market_scope == "US" else text.zfill(6)
+
+
+def _normalize_holdings(
+    holdings: list[dict[str, Any]], market_scope: str = "KR"
+) -> dict[str, dict[str, Any]]:
     normalized: dict[str, dict[str, Any]] = {}
     for item in holdings:
-        ticker = str(item.get("ticker") or "").strip().zfill(6)
+        ticker = _ticker(item.get("ticker"), market_scope)
         try:
             quantity = max(0, int(item.get("quantity") or 0))
             average_price = float(item.get("average_price") or 0) or None
         except (TypeError, ValueError):
             continue
-        if len(ticker) == 6 and ticker.isdigit() and quantity > 0:
+        valid = (
+            bool(ticker) and len(ticker) <= 10 and ticker[0].isalpha()
+            if market_scope == "US"
+            else len(ticker) == 6 and ticker.isdigit()
+        )
+        if valid and quantity > 0:
             normalized[ticker] = {
                 "ticker": ticker,
                 "quantity": quantity,
@@ -377,6 +415,7 @@ def _data_coverage(
     groq_configured: bool,
     krx_configured: bool,
     dart_configured: bool,
+    market_scope: str = "KR",
 ) -> dict[str, Any]:
     total = len(enriched)
 
@@ -397,13 +436,25 @@ def _data_coverage(
         "investor_flow": {
             "covered": count_status("flow_status", {"ok"}),
             "total": total,
-            "primary": "KRX official" if krx_configured else "Naver estimated fallback",
+            "primary": (
+                "Yahoo 10-day volume-flow proxy (not institutional flow)"
+                if market_scope == "US"
+                else "KRX official"
+                if krx_configured
+                else "Naver estimated fallback"
+            ),
         },
         "news": {"covered": count_status("news_status", {"ok", "partial"}), "total": total},
         "disclosures": {
             "covered": count_status("disclosure_status", {"ok", "partial"}),
             "total": total,
-            "primary": "OpenDART official" if dart_configured else "Naver/KOSCOM fallback",
+            "primary": (
+                "SEC EDGAR official"
+                if market_scope == "US"
+                else "OpenDART official"
+                if dart_configured
+                else "Naver/KOSCOM fallback"
+            ),
         },
         "prediction": {
             "covered": sum(item.get("forecast", {}).get("status") == "ok" for item in enriched),

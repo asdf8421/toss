@@ -16,6 +16,8 @@ type MarketRegime =
       reason?: string;
     };
 
+type MarketScope = "KR" | "US";
+
 type Decision = {
   ticker: string;
   name: string;
@@ -34,21 +36,27 @@ type Decision = {
   ai_review?: Record<string, unknown>;
   evidence?: {
     fundamental_status?: string;
+    fundamental_source?: string;
     fundamental_period?: string;
     fundamentals?: Record<string, unknown>;
     flow_status?: string;
     flow_source?: string;
     flow_observations?: number;
+    flow_method?: string;
     news_status?: string;
+    news_source?: string;
     news_detail_coverage?: { covered?: number; attempted?: number };
     news?: Array<Record<string, unknown>>;
     disclosure_status?: string;
+    disclosure_source?: string;
     disclosures?: Array<Record<string, unknown>>;
   };
 };
 
 type Snapshot = {
   schema_version: number;
+  market_scope?: MarketScope;
+  currency?: "KRW" | "USD";
   run_id: string;
   as_of_date: string;
   generated_at: string;
@@ -102,6 +110,7 @@ const actionNames: Record<string, string> = {
 };
 
 export default function Home() {
+  const [marketScope, setMarketScope] = useState<MarketScope>("KR");
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "empty" | "error">("loading");
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
@@ -112,7 +121,7 @@ export default function Home() {
   const loadSnapshot = useCallback(async () => {
     setStatus((current) => (current === "ready" ? current : "loading"));
     try {
-      const response = await fetch("/api/snapshot", { cache: "no-store" });
+      const response = await fetch(`/api/snapshot?market=${marketScope}`, { cache: "no-store" });
       if (response.status === 404) {
         setSnapshot(null);
         setStatus("empty");
@@ -121,16 +130,16 @@ export default function Home() {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const next = (await response.json()) as Snapshot;
       setSnapshot(next);
-      setSelectedTicker((current) => current ?? next.decisions?.[0]?.ticker ?? null);
+      setSelectedTicker(next.decisions?.[0]?.ticker ?? null);
       setStatus("ready");
     } catch {
       setStatus("error");
     }
-  }, []);
+  }, [marketScope]);
 
   const loadAnalysisState = useCallback(async () => {
     try {
-      const response = await fetch("/api/analyze", { cache: "no-store" });
+      const response = await fetch(`/api/analyze?market=${marketScope}`, { cache: "no-store" });
       if (!response.ok) return;
       const next = (await response.json()) as AnalysisState;
       const retryAfter = Math.max(0, Number(next.retry_after_seconds ?? 0));
@@ -144,12 +153,12 @@ export default function Home() {
     } catch {
       // Snapshot display remains usable even when the trigger status endpoint is unavailable.
     }
-  }, [loadSnapshot]);
+  }, [loadSnapshot, marketScope]);
 
   const startAnalysis = useCallback(async () => {
     setAnalysisRequesting(true);
     try {
-      const response = await fetch("/api/analyze", { method: "POST", cache: "no-store" });
+      const response = await fetch(`/api/analyze?market=${marketScope}`, { method: "POST", cache: "no-store" });
       const next = (await response.json()) as AnalysisState;
       const retryAfter = Math.max(0, Number(next.retry_after_seconds ?? 0));
       if (response.status === 429 && retryAfter > 0) {
@@ -167,6 +176,24 @@ export default function Home() {
     } finally {
       setAnalysisRequesting(false);
     }
+  }, [marketScope]);
+
+  const switchMarket = useCallback((next: MarketScope) => {
+    if (next === marketScope) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("market", next);
+    window.history.replaceState({}, "", url);
+    setSnapshot(null);
+    setSelectedTicker(null);
+    setStatus("loading");
+    setAnalysisState({ status: "idle" });
+    setCooldownSeconds(0);
+    setMarketScope(next);
+  }, [marketScope]);
+
+  useEffect(() => {
+    const requested = new URL(window.location.href).searchParams.get("market")?.toUpperCase();
+    if (requested === "US") setMarketScope("US");
   }, []);
 
   useEffect(() => {
@@ -243,11 +270,19 @@ export default function Home() {
       </aside>
 
       <div className="workspace" id="top">
+        <div className="market-tabs" role="tablist" aria-label="분석 시장 선택">
+          <button type="button" role="tab" aria-selected={marketScope === "KR"} className={marketScope === "KR" ? "active" : ""} onClick={() => switchMarket("KR")}>
+            <span>KR</span><strong>한국 증시</strong><small>KOSPI · KOSDAQ</small>
+          </button>
+          <button type="button" role="tab" aria-selected={marketScope === "US"} className={marketScope === "US" ? "active" : ""} onClick={() => switchMarket("US")}>
+            <span>US</span><strong>미국 증시</strong><small>NASDAQ · NYSE · AMEX</small>
+          </button>
+        </div>
         <header className="topbar">
           <div>
             <p className="eyebrow">LATEST VERIFIED DECISION</p>
-            <h1>오늘 무엇을 해야 하는가</h1>
-            <p className="subtitle">검증된 수치와 Groq 심사를 바탕으로 매수·매도·관찰·현금 유지 중 하나를 먼저 보여줍니다.</p>
+            <h1>{marketScope === "US" ? "미국 증시에서 오늘 무엇을 해야 하는가" : "한국 증시에서 오늘 무엇을 해야 하는가"}</h1>
+            <p className="subtitle">{marketScope === "US" ? "무료 미국 시세·SEC 재무·공시·뉴스를 수집한 뒤 정량 검증과 Groq 심사를 거친 행동만 보여줍니다." : "검증된 수치와 Groq 심사를 바탕으로 매수·매도·관찰·현금 유지 중 하나를 먼저 보여줍니다."}</p>
           </div>
           <div className="report-meta">
             <span>최종 갱신</span>
@@ -258,14 +293,14 @@ export default function Home() {
               onClick={() => void startAnalysis()}
               disabled={analysisRequesting || analysisState.status === "queued" || cooldownSeconds > 0}
             >
-              {analysisButtonText(analysisState.status, analysisRequesting, cooldownSeconds)}
+              {marketScope === "US" ? `미국 ${analysisButtonText(analysisState.status, analysisRequesting, cooldownSeconds)}` : analysisButtonText(analysisState.status, analysisRequesting, cooldownSeconds)}
             </button>
             <button type="button" className="refresh-button" onClick={() => void loadSnapshot()}>화면만 새로고침</button>
           </div>
         </header>
 
         <section className="freshness-banner" aria-live="polite">
-          <strong>실시간 호가 아님</strong>
+          <strong>{marketScope === "US" ? "무료 데이터 · 실시간 통합호가 아님" : "실시간 호가 아님"}</strong>
           <span>{snapshot?.market_data_notice ?? "저장된 추천값을 표시하지 않고 최신 분석 스냅샷을 기다리고 있습니다."}</span>
         </section>
 
@@ -286,8 +321,8 @@ export default function Home() {
           <section className="panel live-empty">
             <p className="eyebrow">LIVE ANALYSIS STATUS</p>
             <h2>{status === "error" ? "분석 서버 연결을 확인할 수 없습니다" : status === "empty" ? "아직 게시된 분석이 없습니다" : "최신 분석을 불러오는 중입니다"}</h2>
-            <p>화면에 임의 종목이나 예측 숫자를 채우지 않습니다. 데이터 수집과 Groq 심사가 끝난 결과만 여기에 나타납니다.</p>
-            <button type="button" className="primary-button" onClick={() => void loadSnapshot()}>다시 확인</button>
+            <p>{marketScope === "US" ? "화면에 임의 종목이나 예측 숫자를 채우지 않습니다. 미국 무료 데이터 수집과 Groq 심사가 끝난 결과만 여기에 나타납니다." : "화면에 임의 종목이나 예측 숫자를 채우지 않습니다. 데이터 수집과 Groq 심사가 끝난 결과만 여기에 나타납니다."}</p>
+            {status === "empty" ? <button type="button" className="primary-button" onClick={() => void startAnalysis()}>{marketScope === "US" ? "미국 증시 첫 분석 실행" : "첫 분석 실행"}</button> : <button type="button" className="primary-button" onClick={() => void loadSnapshot()}>다시 확인</button>}
           </section>
         ) : (
           <>
@@ -354,8 +389,8 @@ export default function Home() {
                       </div>
                       <p>{String(item.ai_review?.thesis ?? "AI 근거가 제공되지 않았습니다.")}</p>
                       <div className="order-line">
-                        <span>기준가 <b>{won(item.price?.current)}</b></span>
-                        <span>손절 <b>{won(numberValue(item.risk?.stop_price))}</b></span>
+                        <span>기준가 <b>{money(item.price?.current, snapshot.currency)}</b></span>
+                        <span>손절 <b>{money(numberValue(item.risk?.stop_price), snapshot.currency)}</b></span>
                         <strong>{orderText(plan)}</strong>
                       </div>
                     </button>
@@ -397,7 +432,7 @@ export default function Home() {
               </tbody></table></div>
             </section>
 
-            {selected && <EvidencePanel decision={selected} />}
+            {selected && <EvidencePanel decision={selected} marketScope={marketScope} />}
 
             <section className="method" id="method">
               <div><p className="eyebrow">HOW THE DECISION IS MADE</p><h2>판단이 만들어지는 순서</h2><p>각 단계의 데이터 상태가 기록되고 필수 관문을 통과한 경우에만 신규 매수가 가능합니다.</p></div>
@@ -417,7 +452,7 @@ export default function Home() {
   );
 }
 
-function EvidencePanel({ decision }: { decision: Decision }) {
+function EvidencePanel({ decision, marketScope }: { decision: Decision; marketScope: MarketScope }) {
   const evidence = decision.evidence ?? {};
   const news = evidence.news ?? [];
   const disclosures = evidence.disclosures ?? [];
@@ -427,10 +462,10 @@ function EvidencePanel({ decision }: { decision: Decision }) {
         <div className="panel-head compact"><div><p>DATA PROVENANCE</p><h2>{decision.name} 데이터 출처</h2></div></div>
         <div className="source-table">
           <SourceRow label="가격·거래량" source={decision.price?.source ?? "-"} detail={decision.price?.as_of ?? "-"} ok={Boolean(decision.price?.current)} />
-          <SourceRow label="재무" source="NAVER/FINSTATE" detail={evidence.fundamental_period ?? "기간 없음"} ok={evidence.fundamental_status === "ok"} />
-          <SourceRow label="수급" source={evidence.flow_source ?? "-"} detail={`${evidence.flow_observations ?? 0}거래일`} ok={evidence.flow_status === "ok"} />
-          <SourceRow label="뉴스" source="NAVER 연결 언론사" detail={`본문 요약 ${evidence.news_detail_coverage?.covered ?? 0}/${evidence.news_detail_coverage?.attempted ?? 0}`} ok={evidence.news_status === "ok"} />
-          <SourceRow label="공시" source="OpenDART 또는 KOSCOM" detail={`${disclosures.length}건`} ok={evidence.disclosure_status === "ok"} />
+          <SourceRow label="재무" source={evidence.fundamental_source ?? (marketScope === "US" ? "SEC EDGAR companyfacts" : "NAVER/FINSTATE")} detail={evidence.fundamental_period ?? "기간 없음"} ok={evidence.fundamental_status === "ok"} />
+          <SourceRow label={marketScope === "US" ? "거래량 수급 대용치" : "수급"} source={evidence.flow_source ?? "-"} detail={marketScope === "US" ? (evidence.flow_method ?? `${evidence.flow_observations ?? 0}거래일`) : `${evidence.flow_observations ?? 0}거래일`} ok={evidence.flow_status === "ok"} />
+          <SourceRow label="뉴스" source={evidence.news_source ?? (marketScope === "US" ? "Google News RSS" : "NAVER 연결 언론사")} detail={marketScope === "US" ? `무료 헤드라인 ${news.length}건` : `본문 요약 ${evidence.news_detail_coverage?.covered ?? 0}/${evidence.news_detail_coverage?.attempted ?? 0}`} ok={evidence.news_status === "ok" || evidence.news_status === "partial"} />
+          <SourceRow label="공시" source={evidence.disclosure_source ?? (marketScope === "US" ? "SEC EDGAR" : "OpenDART 또는 KOSCOM")} detail={`${disclosures.length}건`} ok={evidence.disclosure_status === "ok"} />
         </div>
       </div>
       <div className="panel audit-panel">
@@ -467,7 +502,12 @@ function number(value?: number) { return typeof value === "number" ? value.toLoc
 function decimal(value?: number) { return typeof value === "number" ? value.toFixed(2) : "-"; }
 function percent(value?: number) { return typeof value === "number" ? `${value.toFixed(1)}%` : "-"; }
 function signedPercent(value?: number) { return typeof value === "number" ? `${value >= 0 ? "+" : ""}${value.toFixed(2)}%` : "-"; }
-function won(value?: number) { return typeof value === "number" && Number.isFinite(value) ? `${Math.round(value).toLocaleString("ko-KR")}원` : "-"; }
+function money(value?: number, currency: "KRW" | "USD" = "KRW") {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  return currency === "USD"
+    ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value)
+    : `${Math.round(value).toLocaleString("ko-KR")}원`;
+}
 function numberValue(value: unknown) { return typeof value === "number" ? value : undefined; }
 function strategyName(value: string) { return ({ balanced: "균형", rebound: "반등", breakout: "돌파" } as Record<string, string>)[value] ?? value; }
 function analysisButtonText(status: AnalysisState["status"], requesting: boolean, cooldownSeconds: number) {

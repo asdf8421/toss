@@ -102,14 +102,19 @@ def score_stock(
     ticker = str(market_row["ticker"])
     reasons: list[str] = []
     facts: dict[str, Any] = {
-        "price_source": "FinanceDataReader",
+        "price_source": market_row.get("price_source", "FinanceDataReader"),
         "price_as_of": None,
         "fundamental_status": (fundamental or {}).get("status", "unavailable"),
+        "fundamental_source": (fundamental or {}).get("source"),
         "fundamental_period": None,
         "flow_status": (flow or {}).get("status", "unavailable"),
         "flow_source": (flow or {}).get("source"),
         "flow_observations": (flow or {}).get("observations"),
+        "flow_method": (flow or {}).get("method"),
         "flow_value_method": (
+            (flow or {}).get("method")
+            if (flow or {}).get("direct_score") is not None
+            else
             "official KRX net trading value"
             if str((flow or {}).get("source", "")).startswith("pykrx")
             else "estimated net value = net shares x daily close"
@@ -117,9 +122,11 @@ def score_stock(
             else None
         ),
         "news_status": (news or {}).get("status", "unavailable"),
+        "news_source": (news or {}).get("source"),
         "news_count": len((news or {}).get("news", [])),
         "news_detail_coverage": (news or {}).get("article_detail_coverage"),
         "disclosure_status": (disclosures or {}).get("status", "unavailable"),
+        "disclosure_source": (disclosures or {}).get("source"),
         "disclosure_count": len((disclosures or {}).get("items", [])),
     }
 
@@ -295,6 +302,9 @@ def _momentum_score(latest: pd.Series, strategy: str) -> float:
 def _flow_score(flow: dict[str, Any] | None, latest: pd.Series) -> float | None:
     if not flow or flow.get("status") != "ok":
         return None
+    direct = _finite(flow.get("direct_score"))
+    if direct is not None:
+        return float(np.clip(direct, 0, 100))
     average_amount = _finite(latest.get("AVG_AMOUNT20"))
     foreign = _finite(flow.get("foreign_net"))
     institution = _finite(flow.get("institution_net"))

@@ -62,6 +62,7 @@ const SNAPSHOT_SCHEMA = `
 CREATE TABLE IF NOT EXISTS analysis_snapshots (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id TEXT NOT NULL UNIQUE,
+  market_scope TEXT NOT NULL DEFAULT 'KR',
   as_of_date TEXT NOT NULL,
   published_at TEXT NOT NULL,
   payload_json TEXT NOT NULL,
@@ -72,6 +73,7 @@ const ANALYSIS_REQUEST_SCHEMA = `
 CREATE TABLE IF NOT EXISTS analysis_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   request_id TEXT NOT NULL UNIQUE,
+  market_scope TEXT NOT NULL DEFAULT 'KR',
   status TEXT NOT NULL,
   requested_at TEXT NOT NULL,
   previous_run_id TEXT,
@@ -85,6 +87,7 @@ const ANALYSIS_TIMEOUT_MS = 55 * 60 * 1000;
 
 type AnalysisRequestRow = {
   request_id: string;
+  market_scope: string;
   status: string;
   requested_at: string;
   previous_run_id: string | null;
@@ -94,24 +97,38 @@ type AnalysisRequestRow = {
 };
 
 async function ensureDatabaseSchema(db: D1Database) {
+  await db.batch([db.prepare(SNAPSHOT_SCHEMA), db.prepare(ANALYSIS_REQUEST_SCHEMA)]);
+  const snapshotColumns = await db.prepare("PRAGMA table_info(analysis_snapshots)").all<{ name: string }>();
+  const requestColumns = await db.prepare("PRAGMA table_info(analysis_requests)").all<{ name: string }>();
+  if (!snapshotColumns.results.some((column) => column.name === "market_scope")) {
+    await db.prepare("ALTER TABLE analysis_snapshots ADD COLUMN market_scope TEXT NOT NULL DEFAULT 'KR'").run();
+  }
+  if (!requestColumns.results.some((column) => column.name === "market_scope")) {
+    await db.prepare("ALTER TABLE analysis_requests ADD COLUMN market_scope TEXT NOT NULL DEFAULT 'KR'").run();
+  }
   await db.batch([
-    db.prepare(SNAPSHOT_SCHEMA),
     db.prepare(
       "CREATE INDEX IF NOT EXISTS idx_analysis_snapshots_published_at ON analysis_snapshots (published_at)",
     ),
-    db.prepare(ANALYSIS_REQUEST_SCHEMA),
+    db.prepare(
+      "CREATE INDEX IF NOT EXISTS idx_analysis_snapshots_market_published ON analysis_snapshots (market_scope, published_at)",
+    ),
     db.prepare(
       "CREATE INDEX IF NOT EXISTS idx_analysis_requests_requested_at ON analysis_requests (requested_at)",
+    ),
+    db.prepare(
+      "CREATE INDEX IF NOT EXISTS idx_analysis_requests_market_requested ON analysis_requests (market_scope, requested_at)",
     ),
   ]);
 }
 
 async function handleSnapshot(request: Request, env: Env): Promise<Response> {
   await ensureDatabaseSchema(env.DB);
+  const marketScope = marketFromRequest(request);
   if (request.method === "GET") {
     const row = await env.DB.prepare(
-      "SELECT payload_json FROM analysis_snapshots ORDER BY published_at DESC LIMIT 1",
-    ).first<{ payload_json: string }>();
+      "SELECT payload_json FROM analysis_snapshots WHERE market_scope=? ORDER BY published_at DESC LIMIT 1",
+    ).bind(marketScope).first<{ payload_json: string }>();
     if (!row) {
       return jsonResponse({ error: "analysis_not_published" }, 404);
     }
@@ -143,6 +160,7 @@ async function handleSnapshot(request: Request, env: Env): Promise<Response> {
     return jsonResponse({ error: "invalid_json" }, 400);
   }
   const runId = String(payload.run_id ?? "");
+  const payloadMarket = normalizeMarket(payload.market_scope);
   const asOfDate = String(payload.as_of_date ?? "");
   const publishedAt = String(payload.generated_at ?? "");
   if (!runId || !/^\d{4}-\d{2}-\d{2}$/.test(asOfDate) || !publishedAt) {
@@ -156,39 +174,41 @@ async function handleSnapshot(request: Request, env: Env): Promise<Response> {
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO analysis_snapshots
-       (run_id, as_of_date, published_at, payload_json, created_at)
-       VALUES (?, ?, ?, ?, ?)
+       (run_id, market_scope, as_of_date, published_at, payload_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(run_id) DO UPDATE SET
+         market_scope=excluded.market_scope,
          as_of_date=excluded.as_of_date,
          published_at=excluded.published_at,
          payload_json=excluded.payload_json,
          created_at=excluded.created_at`,
-    ).bind(runId, asOfDate, publishedAt, payloadJson, createdAt),
+    ).bind(runId, payloadMarket, asOfDate, publishedAt, payloadJson, createdAt),
     env.DB.prepare(
       `DELETE FROM analysis_snapshots
        WHERE id NOT IN (
-         SELECT id FROM analysis_snapshots ORDER BY published_at DESC LIMIT 30
-       )`,
-    ),
+         SELECT id FROM analysis_snapshots WHERE market_scope=? ORDER BY published_at DESC LIMIT 30
+       ) AND market_scope=?`,
+    ).bind(payloadMarket, payloadMarket),
     env.DB.prepare(
       `UPDATE analysis_requests
        SET status='complete', completed_at=?, completed_run_id=?, failure_message=NULL
-       WHERE status='queued' AND requested_at <= ?`,
-    ).bind(createdAt, runId, createdAt),
+       WHERE status='queued' AND market_scope=? AND requested_at <= ?`,
+    ).bind(createdAt, runId, payloadMarket, createdAt),
     env.DB.prepare(
       `DELETE FROM analysis_requests
        WHERE id NOT IN (
-         SELECT id FROM analysis_requests ORDER BY requested_at DESC LIMIT 30
-       )`,
-    ),
+         SELECT id FROM analysis_requests WHERE market_scope=? ORDER BY requested_at DESC LIMIT 30
+       ) AND market_scope=?`,
+    ).bind(payloadMarket, payloadMarket),
   ]);
-  return jsonResponse({ ok: true, run_id: runId, as_of_date: asOfDate }, 201);
+  return jsonResponse({ ok: true, run_id: runId, market_scope: payloadMarket, as_of_date: asOfDate }, 201);
 }
 
 async function handleAnalysis(request: Request, env: Env): Promise<Response> {
   await ensureDatabaseSchema(env.DB);
+  const marketScope = marketFromRequest(request);
   if (request.method === "GET") {
-    return jsonResponse(await currentAnalysisState(env.DB), 200);
+    return jsonResponse(await currentAnalysisState(env.DB, marketScope), 200);
   }
   if (request.method !== "POST") {
     return jsonResponse({ error: "method_not_allowed" }, 405);
@@ -197,7 +217,7 @@ async function handleAnalysis(request: Request, env: Env): Promise<Response> {
     return jsonResponse({ error: "analysis_trigger_not_configured", message: "분석 실행 연결이 설정되지 않았습니다." }, 503);
   }
 
-  const latest = await latestAnalysisRequest(env.DB);
+  const latest = await latestAnalysisRequest(env.DB, marketScope);
   if (latest) {
     const requestAge = Date.now() - Date.parse(latest.requested_at);
     if (latest.status === "queued" && requestAge < ANALYSIS_TIMEOUT_MS) {
@@ -214,15 +234,15 @@ async function handleAnalysis(request: Request, env: Env): Promise<Response> {
   }
 
   const previous = await env.DB.prepare(
-    "SELECT run_id FROM analysis_snapshots ORDER BY published_at DESC LIMIT 1",
-  ).first<{ run_id: string }>();
+    "SELECT run_id FROM analysis_snapshots WHERE market_scope=? ORDER BY published_at DESC LIMIT 1",
+  ).bind(marketScope).first<{ run_id: string }>();
   const requestId = crypto.randomUUID();
   const requestedAt = new Date().toISOString();
   await env.DB.prepare(
     `INSERT INTO analysis_requests
-     (request_id, status, requested_at, previous_run_id)
-     VALUES (?, 'queued', ?, ?)`,
-  ).bind(requestId, requestedAt, previous?.run_id ?? null).run();
+     (request_id, market_scope, status, requested_at, previous_run_id)
+     VALUES (?, ?, 'queued', ?, ?)`,
+  ).bind(requestId, marketScope, requestedAt, previous?.run_id ?? null).run();
 
   let dispatch: Response;
   try {
@@ -237,7 +257,10 @@ async function handleAnalysis(request: Request, env: Env): Promise<Response> {
           "user-agent": "evidence-first-fund-manager",
           "x-github-api-version": "2022-11-28",
         },
-        body: JSON.stringify({ ref: "main", inputs: { full_scan: "false", request_id: requestId } }),
+        body: JSON.stringify({
+          ref: "main",
+          inputs: { full_scan: "false", request_id: requestId, market: marketScope.toLowerCase() },
+        }),
       },
     );
   } catch {
@@ -249,9 +272,10 @@ async function handleAnalysis(request: Request, env: Env): Promise<Response> {
 
   return jsonResponse({
     request_id: requestId,
+    market_scope: marketScope,
     status: "queued",
     requested_at: requestedAt,
-    message: "최신 시장 데이터 수집과 Groq 심사를 시작했습니다.",
+    message: `${marketScope === "US" ? "미국" : "한국"} 최신 시장 데이터 수집과 Groq 심사를 시작했습니다.`,
   }, 202);
 }
 
@@ -282,10 +306,13 @@ async function handleAnalysisCallback(request: Request, env: Env): Promise<Respo
   return jsonResponse({ ok: true }, 200);
 }
 
-async function currentAnalysisState(db: D1Database): Promise<Record<string, unknown>> {
-  const latest = await latestAnalysisRequest(db);
+async function currentAnalysisState(
+  db: D1Database,
+  marketScope: string,
+): Promise<Record<string, unknown>> {
+  const latest = await latestAnalysisRequest(db, marketScope);
   if (!latest) {
-    return { status: "idle", message: "새 분석을 실행할 수 있습니다." };
+    return { market_scope: marketScope, status: "idle", message: "새 분석을 실행할 수 있습니다." };
   }
   if (latest.status === "queued" && Date.now() - Date.parse(latest.requested_at) >= ANALYSIS_TIMEOUT_MS) {
     const message = "분석이 제한 시간 안에 완료되지 않았습니다. 다시 실행해 주세요.";
@@ -303,13 +330,17 @@ async function currentAnalysisState(db: D1Database): Promise<Record<string, unkn
     : state;
 }
 
-async function latestAnalysisRequest(db: D1Database): Promise<AnalysisRequestRow | null> {
+async function latestAnalysisRequest(
+  db: D1Database,
+  marketScope: string,
+): Promise<AnalysisRequestRow | null> {
   return db.prepare(
-    `SELECT request_id, status, requested_at, previous_run_id,
+    `SELECT request_id, market_scope, status, requested_at, previous_run_id,
             completed_at, completed_run_id, failure_message
      FROM analysis_requests
+     WHERE market_scope=?
      ORDER BY requested_at DESC LIMIT 1`,
-  ).first<AnalysisRequestRow>();
+  ).bind(marketScope).first<AnalysisRequestRow>();
 }
 
 function publicAnalysisState(row: AnalysisRequestRow): Record<string, unknown> {
@@ -320,6 +351,7 @@ function publicAnalysisState(row: AnalysisRequestRow): Record<string, unknown> {
   };
   return {
     request_id: row.request_id,
+    market_scope: row.market_scope,
     status: row.status,
     requested_at: row.requested_at,
     completed_at: row.completed_at,
@@ -349,6 +381,14 @@ function jsonResponse(payload: unknown, status: number): Response {
     status,
     headers: { "cache-control": "no-store, max-age=0" },
   });
+}
+
+function marketFromRequest(request: Request): string {
+  return normalizeMarket(new URL(request.url).searchParams.get("market"));
+}
+
+function normalizeMarket(value: unknown): string {
+  return String(value ?? "KR").toUpperCase() === "US" ? "US" : "KR";
 }
 
 export default worker;
