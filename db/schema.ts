@@ -12,3 +12,18 @@ export const analysisSnapshots = sqliteTable(
   },
   (table) => [index("idx_analysis_snapshots_published_at").on(table.publishedAt)],
 );
+
+export const analysisRequests = sqliteTable(
+  "analysis_requests",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    requestId: text("request_id").notNull().unique(),
+    status: text("status").notNull(),
+    requestedAt: text("requested_at").notNull(),
+    previousRunId: text("previous_run_id"),
+    completedAt: text("completed_at"),
+    completedRunId: text("completed_run_id"),
+    failureMessage: text("failure_message"),
+  },
+  (table) => [index("idx_analysis_requests_requested_at").on(table.requestedAt)],
+);

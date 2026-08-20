@@ -81,6 +81,16 @@ type ActionDirective = {
   steps: [string, string, string];
 };
 
+type AnalysisState = {
+  request_id?: string;
+  status: "idle" | "queued" | "complete" | "failed";
+  requested_at?: string;
+  completed_at?: string;
+  completed_run_id?: string;
+  message?: string;
+  retry_after_seconds?: number;
+};
+
 const actionNames: Record<string, string> = {
   BUY: "매수",
   WATCH: "관찰",
@@ -95,6 +105,8 @@ export default function Home() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "empty" | "error">("loading");
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
+  const [analysisState, setAnalysisState] = useState<AnalysisState>({ status: "idle" });
+  const [analysisRequesting, setAnalysisRequesting] = useState(false);
 
   const loadSnapshot = useCallback(async () => {
     setStatus((current) => (current === "ready" ? current : "loading"));
@@ -115,11 +127,49 @@ export default function Home() {
     }
   }, []);
 
+  const loadAnalysisState = useCallback(async () => {
+    try {
+      const response = await fetch("/api/analyze", { cache: "no-store" });
+      if (!response.ok) return;
+      const next = (await response.json()) as AnalysisState;
+      setAnalysisState(next);
+      if (next.status === "complete") void loadSnapshot();
+    } catch {
+      // Snapshot display remains usable even when the trigger status endpoint is unavailable.
+    }
+  }, [loadSnapshot]);
+
+  const startAnalysis = useCallback(async () => {
+    setAnalysisRequesting(true);
+    try {
+      const response = await fetch("/api/analyze", { method: "POST", cache: "no-store" });
+      const next = (await response.json()) as AnalysisState;
+      setAnalysisState(next);
+      if (!response.ok && !next.status) {
+        setAnalysisState({ status: "failed", message: "분석 실행 요청을 시작하지 못했습니다." });
+      }
+    } catch {
+      setAnalysisState({ status: "failed", message: "분석 실행 서버에 연결하지 못했습니다." });
+    } finally {
+      setAnalysisRequesting(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadSnapshot();
     const timer = window.setInterval(() => void loadSnapshot(), 300_000);
     return () => window.clearInterval(timer);
   }, [loadSnapshot]);
+
+  useEffect(() => {
+    void loadAnalysisState();
+  }, [loadAnalysisState]);
+
+  useEffect(() => {
+    if (analysisState.status !== "queued") return;
+    const timer = window.setInterval(() => void loadAnalysisState(), 10_000);
+    return () => window.clearInterval(timer);
+  }, [analysisState.status, loadAnalysisState]);
 
   const selected = useMemo(
     () => snapshot?.decisions.find((item) => item.ticker === selectedTicker) ?? snapshot?.decisions[0],
@@ -172,7 +222,15 @@ export default function Home() {
           <div className="report-meta">
             <span>최종 갱신</span>
             <strong>{snapshot ? formatDateTime(snapshot.generated_at) : "확인 중"}</strong>
-            <button type="button" className="refresh-button" onClick={() => void loadSnapshot()}>최신 분석 다시 불러오기</button>
+            <button
+              type="button"
+              className="analysis-button"
+              onClick={() => void startAnalysis()}
+              disabled={analysisRequesting || analysisState.status === "queued"}
+            >
+              {analysisButtonText(analysisState.status, analysisRequesting)}
+            </button>
+            <button type="button" className="refresh-button" onClick={() => void loadSnapshot()}>화면만 새로고침</button>
           </div>
         </header>
 
@@ -180,6 +238,17 @@ export default function Home() {
           <strong>실시간 호가 아님</strong>
           <span>{snapshot?.market_data_notice ?? "저장된 추천값을 표시하지 않고 최신 분석 스냅샷을 기다리고 있습니다."}</span>
         </section>
+
+        {analysisState.status !== "idle" && (
+          <section className={`analysis-progress ${analysisState.status}`} aria-live="polite">
+            <div>
+              <strong>{analysisStatusTitle(analysisState.status)}</strong>
+              <span>{analysisState.message ?? "분석 상태를 확인하고 있습니다."}</span>
+            </div>
+            {analysisState.status === "queued" && <div className="progress-track"><i /></div>}
+            {analysisState.requested_at && <small>요청 시각 {formatDateTime(analysisState.requested_at)}</small>}
+          </section>
+        )}
 
         {status !== "ready" || !snapshot ? (
           <section className="panel live-empty">
@@ -369,6 +438,15 @@ function signedPercent(value?: number) { return typeof value === "number" ? `${v
 function won(value?: number) { return typeof value === "number" && Number.isFinite(value) ? `${Math.round(value).toLocaleString("ko-KR")}원` : "-"; }
 function numberValue(value: unknown) { return typeof value === "number" ? value : undefined; }
 function strategyName(value: string) { return ({ balanced: "균형", rebound: "반등", breakout: "돌파" } as Record<string, string>)[value] ?? value; }
+function analysisButtonText(status: AnalysisState["status"], requesting: boolean) {
+  if (requesting) return "분석 요청 보내는 중...";
+  if (status === "queued") return "지금 최신 데이터 분석 중...";
+  if (status === "failed") return "지금 다시 분석 재시도";
+  return "지금 시간 기준으로 다시 분석";
+}
+function analysisStatusTitle(status: AnalysisState["status"]) {
+  return ({ queued: "새 분석을 실행하고 있습니다", complete: "새 분석이 완료됐습니다", failed: "분석 실행을 완료하지 못했습니다", idle: "분석 대기" } as Record<AnalysisState["status"], string>)[status];
+}
 function buildActionDirective(snapshot: Snapshot): ActionDirective {
   const rows = snapshot.decisions ?? [];
   const exits = rows.filter((item) => ["SELL", "REDUCE"].includes(item.action));

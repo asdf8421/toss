@@ -63,13 +63,17 @@ Groq가 `BUY`로 판단한 종목에만 위험 예산을 배정합니다.
 공개 화면에는 소스에 적어 둔 종목이나 예측값이 없습니다. 성공한 파이프라인의 JSON
 스냅샷만 Sites의 D1 저장소에 게시하며, 대시보드는 `/api/snapshot`에서 가장 최근
 실행을 읽어 실행번호, 생성 시각, 가격 기준일과 각 데이터 출처를 함께 표시합니다.
-장중 매시간 및 장 마감 후 실행할 GitHub Actions 정의는
-`automation/publish-analysis.yml`에 준비되어 있습니다. 저장소 인증에 `workflow`
-권한을 추가한 뒤 `.github/workflows/publish-analysis.yml`로 게시해야 자동 실행됩니다.
+대시보드의 `지금 시간 기준으로 다시 분석` 버튼은 서버의 `/api/analyze`를 호출합니다.
+서버는 GitHub Actions의 `.github/workflows/publish-analysis.yml`을 실행하고, 새 스냅샷이
+게시될 때까지 요청 상태를 D1에 저장합니다. 화면은 10초마다 상태를 확인하다가 분석이
+끝나면 새 결과를 자동으로 불러옵니다. 공개 버튼의 반복 호출은 30분 간격으로 제한됩니다.
 
 저장소에는 `GROQ_API_KEY`, `SNAPSHOT_WRITE_TOKEN` 두 Actions secret이 필수입니다.
 `DART_API_KEY`, `KRX_ID`, `KRX_PW`는 공식 공시·수급을 사용할 때 추가합니다. 이 키가
 없어도 네이버/KOSCOM 대체 경로는 동작하지만 화면에 대체 데이터임을 표시합니다.
+Sites 서버에는 정확히 이 워크플로만 실행할 수 있는 `GITHUB_ACTIONS_TOKEN`과 동일한
+`SNAPSHOT_WRITE_TOKEN`을 비밀값으로 설정합니다. 어떤 토큰도 브라우저 번들에는
+포함하지 않습니다.
 
 키가 없는 공급원은 `0`으로 바뀌지 않고 `missing_configuration` 결측으로 저장됩니다.
 Groq 키가 없거나 호출이 실패하면 규칙 결과를 AI 결과로 대체하지 않습니다. UI 실행은
